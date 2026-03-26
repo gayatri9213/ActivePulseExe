@@ -3,7 +3,7 @@ name: Build Installers
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # also allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
 
@@ -13,11 +13,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21.0.10
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'temurin'
+          distribution: 'oracle'        # Oracle JDK to match your local 21.0.10
+
+      - name: Set up Maven 3.9.13
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.13
+
+      - name: Verify versions
+        run: |
+          java --version
+          mvn --version
 
       - name: Install WiX Toolset
         run: |
@@ -31,10 +41,9 @@ jobs:
         run: |
           $env:TEMP = "C:\ap-tmp"
           $env:TMP  = "C:\ap-tmp"
-          New-Item -ItemType Directory -Force -Path "C:\ap-tmp"
-          New-Item -ItemType Directory -Force -Path "C:\ap-build\input"
-          New-Item -ItemType Directory -Force -Path "C:\ap-build\output"
-          New-Item -ItemType Directory -Force -Path "target\setup"
+          New-Item -ItemType Directory -Force -Path "C:\ap-tmp"          | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\ap-build\input"  | Out-Null
+          New-Item -ItemType Directory -Force -Path "target\setup"       | Out-Null
 
           Copy-Item "target\active-pulse-0.0.1-SNAPSHOT.jar" "C:\ap-build\input\"
 
@@ -48,6 +57,7 @@ jobs:
             --type exe `
             --name "ActivePulse" `
             --app-version "1.0.0" `
+            --description "Employee activity monitoring desktop agent" `
             --vendor "Aress Software" `
             --input "C:\ap-build\input" `
             --main-jar "active-pulse-0.0.1-SNAPSHOT.jar" `
@@ -64,14 +74,17 @@ jobs:
             --win-menu `
             --win-menu-group "ActivePulse" `
             --win-shortcut `
+            --win-shortcut-prompt `
             --win-per-user-install `
-            --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890" `
+            --win-launch-app-after-install
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-Windows
+          name: ActivePulse-Windows-1.0.0
           path: target/setup/ActivePulse-1.0.0.exe
+          retention-days: 30
 
   # ── Linux .deb ───────────────────────────────────────────────────────
   build-linux:
@@ -79,32 +92,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21.0.10
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'temurin'
+          distribution: 'oracle'
+
+      - name: Set up Maven 3.9.13
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.13
+
+      - name: Verify versions
+        run: |
+          java --version
+          mvn --version
 
       - name: Build JAR
         run: mvn clean package -q
 
       - name: Build Linux .deb installer
         run: |
-          mkdir -p /tmp/ap-build/input target/setup
-          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-build/input/
+          mkdir -p /tmp/ap-input target/setup
+          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
 
           ICON_ARG=""
           if [ -f "src/main/resources/tray-icon.png" ]; then
-            cp src/main/resources/tray-icon.png /tmp/ap-build/
-            ICON_ARG="--icon /tmp/ap-build/tray-icon.png"
+            cp src/main/resources/tray-icon.png /tmp/ap-input/
+            ICON_ARG="--icon /tmp/ap-input/tray-icon.png"
           fi
 
           jpackage \
             --type deb \
             --name "ActivePulse" \
             --app-version "1.0.0" \
+            --description "Employee activity monitoring desktop agent" \
             --vendor "Aress Software" \
-            --input /tmp/ap-build/input \
+            --input /tmp/ap-input \
             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
             --main-class com.activepulse.agent.ActivePulseApplication \
             --dest target/setup \
@@ -122,20 +146,31 @@ jobs:
       - name: Upload Linux installer
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-Linux
+          name: ActivePulse-Linux-1.0.0
           path: target/setup/*.deb
+          retention-days: 30
 
-  # ── macOS .dmg + .pkg ────────────────────────────────────────────────
+  # ── macOS .dmg ───────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21.0.10
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'temurin'
+          distribution: 'oracle'
+
+      - name: Set up Maven 3.9.13
+        uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.13
+
+      - name: Verify versions
+        run: |
+          java --version
+          mvn --version
 
       - name: Build JAR
         run: mvn clean package -q
@@ -161,6 +196,7 @@ jobs:
             --type dmg \
             --name "ActivePulse" \
             --app-version "1.0.0" \
+            --description "Employee activity monitoring desktop agent" \
             --vendor "Aress Software" \
             --input /tmp/ap-input \
             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
@@ -178,5 +214,6 @@ jobs:
       - name: Upload macOS installer
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-macOS
+          name: ActivePulse-macOS-1.0.0
           path: target/setup/*.dmg
+          retention-days: 30
