@@ -2,8 +2,8 @@ name: Build Installers
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, dev ]   # triggers on both branches
+  workflow_dispatch:            # also trigger manually from GitHub UI
 
 jobs:
 
@@ -76,8 +76,7 @@ jobs:
             --win-shortcut `
             --win-shortcut-prompt `
             --win-per-user-install `
-            --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890" `
-            --win-launch-app-after-install
+            --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
