@@ -16,39 +16,45 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * BrowserUrlTracker — reads active URL from Chrome / Edge / Brave / Firefox.
+ * BrowserUrlTracker — reads active URL from all major browsers.
  *
- * Writes a .ps1 script file to disk and executes it.
- * This avoids all quote-escaping issues when passing scripts inline.
+ * Supported:
+ *   Chrome, Edge, Brave, Opera, Vivaldi  → "Address and search bar"
+ *   Firefox                              → "Search or enter address"
+ *   Internet Explorer / legacy Edge      → window title parsing
+ *
+ * Uses PowerShell UIAutomation via a .ps1 file (no Chrome flags needed).
+ * Script is written once to ~/.activepulse/get-url.ps1 on first use.
  */
 public class BrowserUrlTracker {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserUrlTracker.class);
 
+    // Process name → address bar automation Name
     private static final Map<String, String> BROWSER_BAR = Map.of(
-            "chrome",  "Address and search bar",
-            "msedge",  "Address and search bar",
-            "brave",   "Address and search bar",
-            "opera",   "Address and search bar",
-            "vivaldi", "Address and search bar",
-            "firefox", "Search or enter address"
+            "chrome",   "Address and search bar",
+            "msedge",   "Address and search bar",
+            "brave",    "Address and search bar",
+            "opera",    "Address and search bar",
+            "vivaldi",  "Address and search bar",
+            "firefox",  "Search or enter address",
+            "iexplore", "Address and search bar"
     );
 
+    // Firefox needs a different automation approach —
+    // its address bar Name is not "Search or enter address" in all versions.
+    // We try the bar Name first, then fall back to ControlType + editable check.
+    private static final Set<String> FIREFOX_PROCS = Set.of("firefox");
     private static final Set<String> SUPPORTED = BROWSER_BAR.keySet();
 
-    // Path to the temp script — written once on first use
     private static final Path PS_SCRIPT = Paths.get(
-            System.getProperty("user.home"),
-            ".activepulse", "get-url.ps1"
-    );
+            System.getProperty("user.home"), ".activepulse", "get-url.ps1");
 
     private boolean scriptReady = false;
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile BrowserUrlTracker instance;
-    private BrowserUrlTracker() {
-        writePsScript();
-    }
+    private BrowserUrlTracker() { writePsScript(); }
 
     public static BrowserUrlTracker getInstance() {
         if (instance == null) {
@@ -60,38 +66,72 @@ public class BrowserUrlTracker {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Write PowerShell script to disk
+    //  Write PowerShell script
     // ─────────────────────────────────────────────────────────────────
 
     private void writePsScript() {
-        // Script accepts two args: $args[0] = process name, $args[1] = bar name
+        // Firefox needs special handling — try Name property first,
+        // then fall back to finding the first editable text field
+        // in the toolbar (ControlType = Edit in the navigation bar)
         String script = """
             param($procName, $barName)
             Add-Type -AssemblyName UIAutomationClient
             Add-Type -AssemblyName UIAutomationTypes
-            $proc = Get-Process $procName -ErrorAction SilentlyContinue `
-                    | Where-Object { $_.MainWindowHandle -ne 0 } `
-                    | Select-Object -First 1
-            if (-not $proc) { exit }
             try {
+                $proc = Get-Process $procName -ErrorAction SilentlyContinue `
+                        | Where-Object { $_.MainWindowHandle -ne 0 } `
+                        | Select-Object -First 1
+                if (-not $proc) { exit }
+
                 $ae = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+                if (-not $ae) { exit }
+
+                # Strategy 1: find by Name property (Chrome/Edge/Brave)
                 $cond = New-Object System.Windows.Automation.PropertyCondition(
                     [System.Windows.Automation.AutomationElement]::NameProperty, $barName)
-                $bar = $ae.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+                $bar = $ae.FindFirst(
+                    [System.Windows.Automation.TreeScope]::Descendants, $cond)
+
+                # Strategy 2: Firefox fallback — find Edit control in toolbar
+                if (-not $bar) {
+                    $editCond = New-Object System.Windows.Automation.PropertyCondition(
+                        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                        [System.Windows.Automation.ControlType]::Edit)
+                    $edits = $ae.FindAll(
+                        [System.Windows.Automation.TreeScope]::Descendants, $editCond)
+                    foreach ($edit in $edits) {
+                        $name = $edit.Current.Name
+                        if ($name -like "*address*" -or $name -like "*search*" -or $name -like "*url*") {
+                            $bar = $edit
+                            break
+                        }
+                    }
+                    # Strategy 3: take first Edit that has http value
+                    if (-not $bar) {
+                        foreach ($edit in $edits) {
+                            try {
+                                $vp  = [System.Windows.Automation.ValuePattern]::Pattern
+                                $val = $edit.GetCurrentPattern($vp).Current.Value
+                                if ($val -like "http*") { $bar = $edit; break }
+                            } catch {}
+                        }
+                    }
+                }
+
                 if ($bar) {
-                    $vp = [System.Windows.Automation.ValuePattern]::Pattern
-                    $bar.GetCurrentPattern($vp).Current.Value
+                    $vp  = [System.Windows.Automation.ValuePattern]::Pattern
+                    $val = $bar.GetCurrentPattern($vp).Current.Value
+                    if ($val) { Write-Output $val }
                 }
             } catch {
-                # silently exit on any error
+                # silent exit
             }
             """;
-
         try {
             Files.createDirectories(PS_SCRIPT.getParent());
             Files.writeString(PS_SCRIPT, script);
             scriptReady = true;
-            log.info("BrowserUrlTracker: PS script written to {}", PS_SCRIPT);
+            log.info("BrowserUrlTracker: PS script ready — {}", PS_SCRIPT);
         } catch (Exception e) {
             log.error("Failed to write PS script: {}", e.getMessage());
         }
@@ -110,7 +150,7 @@ public class BrowserUrlTracker {
 
         if (!SUPPORTED.contains(proc)) return null;
 
-        // Only read when browser is in foreground
+        // Only read when browser window is in foreground
         HWND fg = User32.INSTANCE.GetForegroundWindow();
         if (fg == null) return null;
 
@@ -118,8 +158,8 @@ public class BrowserUrlTracker {
         String raw     = runScript(proc, barName);
 
         log.debug("URL raw [{}]: '{}'", proc, raw);
-
         if (raw == null || raw.isBlank()) return null;
+
         return buildResult(raw);
     }
 
@@ -134,7 +174,7 @@ public class BrowserUrlTracker {
                     "-NonInteractive",
                     "-NoProfile",
                     "-ExecutionPolicy", "Bypass",
-                    "-File",  PS_SCRIPT.toAbsolutePath().toString(),  // ← file, not -Command
+                    "-File",  PS_SCRIPT.toAbsolutePath().toString(),
                     procName,
                     barName
             );
@@ -152,14 +192,9 @@ public class BrowserUrlTracker {
             }
 
             boolean done = p.waitFor(3, TimeUnit.SECONDS);
-            if (!done) {
-                p.destroyForcibly();
-                log.debug("PS script timed out for '{}'", procName);
-                return null;
-            }
+            if (!done) { p.destroyForcibly(); return null; }
 
             return output;
-
         } catch (Exception e) {
             log.debug("PS script exec failed: {}", e.getMessage());
             return null;
@@ -173,13 +208,12 @@ public class BrowserUrlTracker {
     private UrlResult buildResult(String raw) {
         if (raw == null || raw.isBlank()) return null;
 
-        // Skip internal / empty states
+        // Skip internal browser pages
         if (raw.startsWith("chrome://") || raw.startsWith("edge://")
-                || raw.startsWith("about:")
+                || raw.startsWith("about:") || raw.startsWith("browser://")
                 || raw.equalsIgnoreCase("Search or enter address")
                 || raw.equalsIgnoreCase("Search or type URL")
                 || raw.equalsIgnoreCase("Address and search bar")) {
-            log.debug("Skipping internal page: {}", raw);
             return null;
         }
 
@@ -189,8 +223,8 @@ public class BrowserUrlTracker {
         }
 
         try {
-            URI    uri  = URI.create(url);
-            String host = uri.getHost();
+            URI    uri    = URI.create(url);
+            String host   = uri.getHost();
             if (host == null || host.isBlank()) return null;
             String domain = host.startsWith("www.") ? host.substring(4) : host;
             return new UrlResult(url, domain, raw);
@@ -199,10 +233,6 @@ public class BrowserUrlTracker {
             return null;
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Result
-    // ─────────────────────────────────────────────────────────────────
 
     public record UrlResult(String url, String domain, String rawText) {}
 }

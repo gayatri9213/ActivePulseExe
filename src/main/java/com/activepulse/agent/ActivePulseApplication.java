@@ -118,10 +118,9 @@ public class ActivePulseApplication {
     // ─────────────────────────────────────────────────────────────────
 
     private void installAutoStartIfNeeded() {
-        // Always re-register on every startup so the path is always current.
-        // Safe to call repeatedly — reg /f overwrites silently.
+        // Always re-register — keeps JAR path + Java path current
+        // even if the JAR was moved or Java was upgraded
         AutoStartManager.getInstance().install();
-        log.info("Auto-start registration complete.");
     }
 
     // ─────────────────────────────────────────────────────────────────

@@ -10,13 +10,14 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * SystemTrayManager — minimal tray icon, coloured status dot only.
+ * No tooltip. No right-click menu.
+ * Icon colour reflects current UserStatus.
+ */
 public class SystemTrayManager {
 
     private static final Logger log = LoggerFactory.getLogger(SystemTrayManager.class);
@@ -37,87 +38,47 @@ public class SystemTrayManager {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Install — called from main thread
+    //  Install
     // ─────────────────────────────────────────────────────────────────
 
     public void install() {
-
-        // ── Guard 1: headless ─────────────────────────────────────────
-        String headless = System.getProperty("java.awt.headless", "false");
-        log.info("java.awt.headless = {}", headless);
-        if ("true".equalsIgnoreCase(headless)) {
-            log.error("Headless mode is ON — tray cannot start. " +
-                    "Add -Djava.awt.headless=false to JVM args.");
+        try {
+            Toolkit.getDefaultToolkit();
+        } catch (Exception e) {
+            log.error("AWT Toolkit init failed: {}", e.getMessage());
             return;
         }
 
-        // ── Guard 2: tray supported ───────────────────────────────────
-        if (!SystemTray.isSupported()) {
-            log.error("SystemTray.isSupported() = false on this platform.");
+        if (GraphicsEnvironment.isHeadless() || !SystemTray.isSupported()) {
+            log.warn("System tray not available.");
             return;
         }
-        log.info("SystemTray is supported — proceeding.");
 
-        // ── Run on EDT and WAIT for it to complete ────────────────────
         CountDownLatch latch = new CountDownLatch(1);
         SwingUtilities.invokeLater(() -> {
             try {
-                createTrayIcon();
+                tray     = SystemTray.getSystemTray();
+                trayIcon = new TrayIcon(buildIcon(UserStatus.IDLE));
+                trayIcon.setImageAutoSize(true);
+                // ── No tooltip ────────────────────────────────────────
+                // ── No popup menu ─────────────────────────────────────
+                tray.add(trayIcon);
+                log.info("System tray icon installed.");
+                UserStatusTracker.getInstance().setOnStatusChanged(this::refresh);
+            } catch (AWTException e) {
+                log.error("Failed to install tray icon: {}", e.getMessage());
             } finally {
                 latch.countDown();
             }
         });
 
-        // Wait up to 5 seconds for EDT to finish
-        try {
-            boolean done = latch.await(5, TimeUnit.SECONDS);
-            if (!done) log.error("Tray init timed out after 5s — EDT may be blocked.");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Create icon — runs on EDT
-    // ─────────────────────────────────────────────────────────────────
-
-    private void createTrayIcon() {
-        try {
-            log.info("EDT: creating tray icon...");
-
-            tray     = SystemTray.getSystemTray();
-            Image img = buildIcon(UserStatus.IDLE);
-
-            trayIcon = new TrayIcon(img, "ActivePulse | Idle");
-            trayIcon.setImageAutoSize(true);
-            trayIcon.setPopupMenu(buildMenu());
-
-            tray.add(trayIcon);
-            log.info("EDT: tray icon added successfully.");
-
-            // Balloon notification so user sees it appeared
-            trayIcon.displayMessage(
-                    "ActivePulse Started",
-                    "Monitoring is active. Right-click this icon for options.",
-                    TrayIcon.MessageType.INFO
-            );
-
-            // Register status change callback
-            UserStatusTracker.getInstance().setOnStatusChanged(this::refresh);
-
-        } catch (AWTException e) {
-            log.error("AWTException while adding tray icon: {}", e.getMessage(), e);
-        } catch (Exception e) {
-            log.error("Unexpected error creating tray icon: {}", e.getMessage(), e);
-        }
+        try { latch.await(5, TimeUnit.SECONDS); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     public void remove() {
         if (tray != null && trayIcon != null) {
-            SwingUtilities.invokeLater(() -> {
-                tray.remove(trayIcon);
-                log.info("Tray icon removed.");
-            });
+            SwingUtilities.invokeLater(() -> tray.remove(trayIcon));
         }
     }
 
@@ -130,24 +91,16 @@ public class SystemTrayManager {
         SwingUtilities.invokeLater(() -> {
             UserStatus s = UserStatusTracker.getInstance().getStatus();
             trayIcon.setImage(buildIcon(s));
-            trayIcon.setToolTip(buildTooltip(s));
-            trayIcon.setPopupMenu(buildMenu());
         });
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Icon
-    //  1. Tries to load tray-icon.png from classpath (your custom logo)
-    //  2. Falls back to a programmatic coloured dot
+    //  Icon — custom PNG or coloured dot fallback
     // ─────────────────────────────────────────────────────────────────
 
     private Image buildIcon(UserStatus status) {
-        BufferedImage base = loadResourceImage("tray-icon.png");
-        if (base != null) {
-            log.debug("Using custom tray-icon.png");
-            return overlayDot(base, status);
-        }
-        log.debug("No tray-icon found — using coloured dot.");
+        BufferedImage base = loadResource("tray-icon.png");
+        if (base != null) return overlayDot(base, status);
         return buildDot(status);
     }
 
@@ -157,7 +110,6 @@ public class SystemTrayManager {
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.drawImage(base, 0, 0, size, size, null);
-
         int d = 18, x = size - d - 2, y = size - d - 2;
         g.setColor(Color.WHITE);
         g.fillOval(x - 2, y - 2, d + 4, d + 4);
@@ -186,84 +138,20 @@ public class SystemTrayManager {
 
     private Color dotColor(UserStatus status) {
         return switch (status) {
-            case WORKING -> new Color(34, 197, 94);    // green (clean success)
-            case NEUTRAL -> new Color(229, 231, 235);   // slate gray (true neutral)
-            case IDLE    -> new Color(75, 85, 99);  // soft gray
-            case STOPPED -> new Color(239, 68, 68);    // red
-            case AWAY    -> new Color(245, 158, 11);   // amber/orange
+            case WORKING -> new Color(34,  197, 94);
+            case NEUTRAL -> new Color(234, 179, 8);
+            case IDLE    -> new Color(156, 163, 175);
+            case AWAY    -> new Color(249, 115, 22);
+            case STOPPED -> new Color(239, 68,  68);
         };
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    //  Tooltip
-    // ─────────────────────────────────────────────────────────────────
-
-    private String buildTooltip(UserStatus status) {
-        return "ActivePulse  |  "
-                + status.getLabel()
-                + "  |  "
-                + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Right-click menu
-    // ─────────────────────────────────────────────────────────────────
-
-    private PopupMenu buildMenu() {
-        UserStatus status = UserStatusTracker.getInstance().getStatus();
-        PopupMenu  menu   = new PopupMenu();
-
-        MenuItem s1 = new MenuItem("Status: " + status.getLabel());
-        s1.setEnabled(false);
-        menu.add(s1);
-
-        MenuItem s2 = new MenuItem(
-                System.getProperty("user.name") + "  @  " + System.getProperty("os.name"));
-        s2.setEnabled(false);
-        menu.add(s2);
-
-        menu.addSeparator();
-
-        MenuItem logs = new MenuItem("Open Logs Folder");
-        logs.addActionListener(e -> openFolder(
-                Paths.get(System.getProperty("user.home"), ".activepulse", "logs")));
-        menu.add(logs);
-
-        MenuItem data = new MenuItem("Open Data Folder");
-        data.addActionListener(e -> openFolder(
-                Paths.get(System.getProperty("user.home"), ".activepulse")));
-        menu.add(data);
-
-        menu.addSeparator();
-
-        MenuItem exit = new MenuItem("Exit ActivePulse");
-        exit.addActionListener(e -> {
-            log.info("Exit from tray.");
-            UserStatusTracker.getInstance().setStopped();
-            remove();
-            System.exit(0);
-        });
-        menu.add(exit);
-
-        return menu;
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Helpers
-    // ─────────────────────────────────────────────────────────────────
-
-    private BufferedImage loadResourceImage(String name) {
+    private BufferedImage loadResource(String name) {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(name)) {
             if (is == null) return null;
             return ImageIO.read(is);
         } catch (Exception e) {
-            log.debug("Could not load '{}': {}", name, e.getMessage());
             return null;
         }
-    }
-
-    private void openFolder(Path path) {
-        try { Desktop.getDesktop().open(path.toFile()); }
-        catch (Exception e) { log.warn("Cannot open folder: {}", e.getMessage()); }
     }
 }

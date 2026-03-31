@@ -14,23 +14,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-/**
- * AppActivityRecorder — tracks active windows and browser URLs.
- * <p>
- * Writes to unified activity_log table:
- * Regular apps  → processname=appName, title=windowTitle, url=NULL
- * Browser URLs  → processname=appName, title=pageTitle,   url=fullUrl
- */
 public class AppActivityRecorder {
 
     private static final Logger log = LoggerFactory.getLogger(AppActivityRecorder.class);
 
-    private static final int POLL_SECONDS = 2;
-    private static final int MIN_APP_SECS = 2;
+    private static final int POLL_SECONDS   = 2;
+    private static final int MIN_APP_SECS   = 2;
     private static final int URL_FLUSH_SECS = 30;
 
-    private final WindowTracker windowTracker = new WindowTracker();
-    private final BrowserUrlTracker urlTracker = BrowserUrlTracker.getInstance();
+    private final WindowTracker     windowTracker = new WindowTracker();
+    private final BrowserUrlTracker urlTracker    = BrowserUrlTracker.getInstance();
 
     private final ScheduledExecutorService scheduler =
             Executors.newScheduledThreadPool(2, r -> {
@@ -40,19 +33,19 @@ public class AppActivityRecorder {
             });
 
     // ── App state ─────────────────────────────────────────────────────
-    private WindowInfo currentWindow = WindowInfo.empty();
-    private Instant windowStart = Instant.now();
+    private WindowInfo currentWindow    = WindowInfo.empty();
+    private Instant    windowStart      = Instant.now();
+    private String     windowStatusType = "ACTIVE";
 
     // ── URL state ─────────────────────────────────────────────────────
-    private String currentUrl = null;
-    private String currentDomain = null;
-    private Instant urlStart = null;
+    private String  currentUrl      = null;
+    private String  currentDomain   = null;
+    private Instant urlStart        = null;
+    private String  urlStatusType   = "ACTIVE";
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile AppActivityRecorder instance;
-
-    private AppActivityRecorder() {
-    }
+    private AppActivityRecorder() {}
 
     public static AppActivityRecorder getInstance() {
         if (instance == null) {
@@ -78,17 +71,17 @@ public class AppActivityRecorder {
     public void stop() {
         scheduler.shutdownNow();
         Instant now = Instant.now();
-        if (!currentWindow.isEmpty()) saveActivity(currentWindow, null, windowStart, now);
+        if (!currentWindow.isEmpty())
+            saveActivity(currentWindow, null, windowStart, now, windowStatusType);
         synchronized (this) {
-            if (currentUrl != null && urlStart != null) {
-                saveActivity(currentWindow, currentUrl, urlStart, now);
-            }
+            if (currentUrl != null && urlStart != null)
+                saveActivity(currentWindow, currentUrl, urlStart, now, urlStatusType);
         }
         log.info("AppActivityRecorder stopped.");
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Window poll
+    //  Window poll — every 2 seconds
     // ─────────────────────────────────────────────────────────────────
 
     private void pollWindow() {
@@ -99,24 +92,21 @@ public class AppActivityRecorder {
             Instant now = Instant.now();
 
             if (!active.isSameWindow(currentWindow)) {
-                if (!currentWindow.isEmpty()) {
-                    saveActivity(currentWindow, null, windowStart, now);
-                }
-                // Different process → flush URL
+                if (!currentWindow.isEmpty())
+                    saveActivity(currentWindow, null, windowStart, now, windowStatusType);
+
                 if (!active.isSameApp(currentWindow)) {
                     synchronized (this) {
-                        if (currentUrl != null && urlStart != null) {
-                            saveActivity(currentWindow, currentUrl, urlStart, now);
-                        }
-                        currentUrl = null;
-                        currentDomain = null;
-                        urlStart = null;
+                        if (currentUrl != null && urlStart != null)
+                            saveActivity(currentWindow, currentUrl, urlStart, now, urlStatusType);
+                        currentUrl = null; currentDomain = null; urlStart = null;
                     }
                 }
                 log.info("Window → app='{}' title='{}'",
                         active.appName(), truncate(active.windowTitle(), 70));
-                currentWindow = active;
-                windowStart = now;
+                currentWindow    = active;
+                windowStart      = now;
+                windowStatusType = resolveActivityType(); // capture status at START
             }
             pollUrl(active, now);
         } catch (Exception e) {
@@ -125,7 +115,7 @@ public class AppActivityRecorder {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  URL poll
+    //  URL poll — called every 2s while a browser is active
     // ─────────────────────────────────────────────────────────────────
 
     private synchronized void pollUrl(WindowInfo active, Instant now) {
@@ -145,15 +135,17 @@ public class AppActivityRecorder {
 
         if (currentUrl == null) {
             log.info("URL started → {} | {}", result.domain(), truncate(newUrl, 80));
-            currentUrl = newUrl;
-            currentDomain = result.domain();
-            urlStart = now;
+            currentUrl      = newUrl;
+            currentDomain   = result.domain();
+            urlStart        = now;
+            urlStatusType   = resolveActivityType(); // capture status at URL START
         } else if (!currentUrl.equals(newUrl)) {
-            saveActivity(active, currentUrl, urlStart, now);
+            saveActivity(active, currentUrl, urlStart, now, urlStatusType);
             log.info("URL → {} | {}", result.domain(), truncate(newUrl, 80));
-            currentUrl = newUrl;
-            currentDomain = result.domain();
-            urlStart = now;
+            currentUrl      = newUrl;
+            currentDomain   = result.domain();
+            urlStart        = now;
+            urlStatusType   = resolveActivityType();
         }
     }
 
@@ -166,19 +158,30 @@ public class AppActivityRecorder {
         Instant now = Instant.now();
         log.info("URL flush → {} {}s", currentDomain,
                 now.getEpochSecond() - urlStart.getEpochSecond());
-        saveActivity(currentWindow, currentUrl, urlStart, now);
-        urlStart = now;
+        saveActivity(currentWindow, currentUrl, urlStart, now, urlStatusType);
+        urlStart      = now;
+        urlStatusType = resolveActivityType();
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  DB write — single method for both apps and URLs
-    //
-    //  url == null  → regular app row (url column stays NULL in DB)
-    //  url != null  → browser URL row
+    //  Resolve activityType from current tray status
+    // ─────────────────────────────────────────────────────────────────
+
+    private String resolveActivityType() {
+        return switch (UserStatusTracker.getInstance().getStatus()) {
+            case WORKING, NEUTRAL -> "ACTIVE";
+            case IDLE             -> "IDLE";
+            case AWAY, STOPPED    -> "AWAY";
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  DB write — unified for apps and URLs
     // ─────────────────────────────────────────────────────────────────
 
     private void saveActivity(WindowInfo window, String url,
-                              Instant start, Instant end) {
+                              Instant start, Instant end,
+                              String activityType) {
         long duration = end.getEpochSecond() - start.getEpochSecond();
         if (url == null && duration < MIN_APP_SECS) return;
 
@@ -190,8 +193,8 @@ public class AppActivityRecorder {
             try (PreparedStatement ps = conn.prepareStatement("""
                     INSERT INTO activity_log
                         (username, deviceid, starttime, endtime,
-                         processname, title, url, duration)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         processname, title, url, duration, activity_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """)) {
                 ps.setString(1, username);
                 ps.setString(2, deviceid);
@@ -199,14 +202,15 @@ public class AppActivityRecorder {
                 ps.setString(4, TimeUtil.toIST(end));
                 ps.setString(5, window.appName());
                 ps.setString(6, window.windowTitle());
-                ps.setString(7, url);           // NULL for regular apps
-                ps.setLong(8, duration);
+                ps.setString(7, url);
+                ps.setLong(8,   duration);
+                ps.setString(9, activityType);
                 ps.executeUpdate();
 
                 if (url != null)
-                    log.info("Saved URL  → {} {}s", currentDomain, duration);
+                    log.info("Saved URL  → {} {}s [{}]", currentDomain, duration, activityType);
                 else
-                    log.info("Saved app  → '{}' {}s", window.appName(), duration);
+                    log.info("Saved app  → '{}' {}s [{}]", window.appName(), duration, activityType);
             }
         } catch (SQLException e) {
             log.error("saveActivity failed: {}", e.getMessage());

@@ -1,6 +1,7 @@
 package com.activepulse.agent.sync;
 
 import com.activepulse.agent.db.DatabaseManager;
+import com.activepulse.agent.util.EnvConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,29 +11,22 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
- * SyncConfig — reads server connection settings from agent_config table.
+ * SyncConfig — seeds agent_config table from EnvConfig (agent.env).
  *
- * Keys expected in agent_config:
- *   serverUrl    — full endpoint URL  e.g. https://api.activepulse.com/v1/sync
- *   apiKey       — Bearer token for Authorization header
- *   userId       — assigned user ID
- *   orgId        — organisation ID
+ * Values written to agent_config on every startup:
+ *   serverUrl      ← SERVER_BASE_URL
+ *   apiKey         ← API_KEY
+ *   userId         ← USER_ID
+ *   orgId          ← ORGANIZATION_ID
+ *   agentVersion   ← AGENT_VERSION
  *
- * Call SyncConfig.seed() once at startup to insert defaults if missing.
- * Operator updates these rows directly in the DB or via an installer wizard.
+ * isConfigured() returns true only when SERVER_BASE_URL and API_KEY
+ * are real values (not placeholders).
  */
 public class SyncConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SyncConfig.class);
 
-    // ── Defaults (used when keys are absent from DB) ─────────────────
-    public static final String DEFAULT_SERVER_URL = "https://api.activepulse.com/v1/sync";
-    public static final int    CONNECT_TIMEOUT_SEC = 10;
-    public static final int    REQUEST_TIMEOUT_SEC = 30;
-    public static final int    MAX_RETRIES         = 3;
-    public static final long   RETRY_BASE_DELAY_MS = 2_000; // doubles each attempt
-
-    // ── Singleton ────────────────────────────────────────────────────
     private static volatile SyncConfig instance;
     private SyncConfig() {}
 
@@ -46,55 +40,71 @@ public class SyncConfig {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Public getters — always read live from DB so changes take effect
-    //  without restart
-    // ─────────────────────────────────────────────────────────────────
-
-    public String getServerUrl() {
-        String url = read("serverUrl");
-        return (url == null || url.isBlank()) ? DEFAULT_SERVER_URL : url;
-    }
-
-    public String getApiKey() {
-        return read("apiKey");   // null = no auth header sent
-    }
-
-    public String getUserId() {
-        return read("userId");
-    }
-
-    public String getOrgId() {
-        return read("orgId");
-    }
-
-    /** Returns true only when a real server URL and API key are configured. */
-     public boolean isConfigured() {
-        String url    = getServerUrl();
-        String apiKey = getApiKey();
-        return url != null && !url.isBlank()
-                && !url.equals(DEFAULT_SERVER_URL)   // ← still default = NOT configured
-                && apiKey != null && !apiKey.isBlank()
-                && !apiKey.equals("YOUR_API_KEY_HERE"); // ← placeholder = NOT configured
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Seed — insert placeholder values at first startup so the rows
-    //  exist and the operator knows what to fill in
+    //  Seed — called once at startup from ActivePulseApplication
+    //  Writes EnvConfig values into agent_config table.
+    //  Uses INSERT OR REPLACE so values are always kept current.
     // ─────────────────────────────────────────────────────────────────
 
     public void seed() {
-        upsertIfAbsent("serverUrl", DEFAULT_SERVER_URL);
-        upsertIfAbsent("apiKey",    "YOUR_API_KEY_HERE");
-        upsertIfAbsent("userId",    "USR-UNKNOWN");
-        upsertIfAbsent("orgId",     "ORG-UNKNOWN");
-        log.info("SyncConfig seeded. Update serverUrl + apiKey in agent_config to enable HTTP sync.");
+        String serverUrl    = EnvConfig.get("SERVER_BASE_URL", "https://api.activepulse.com");
+        String apiKey       = EnvConfig.get("API_KEY",          "YOUR_API_KEY_HERE");
+        String userId       = EnvConfig.get("USER_ID",          "0");
+        String orgId        = EnvConfig.get("ORGANIZATION_ID",  "0");
+        String agentVersion = EnvConfig.get("AGENT_VERSION",    "1.0.0");
+
+        upsert("serverUrl",    serverUrl);
+        upsert("apiKey",       apiKey);
+        upsert("userId",       userId);
+        upsert("orgId",        orgId);
+        upsert("agentVersion", agentVersion);
+
+        if (isConfigured()) {
+            log.info("SyncConfig seeded — server: {}", serverUrl);
+            log.info("  userId: {}  orgId: {}", userId, orgId);
+        } else {
+            log.warn("SyncConfig seeded — API key not configured.");
+            log.warn("  Set SERVER_BASE_URL and API_KEY in agent.env to enable HTTP sync.");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Public API — always reads live from agent_config
+    // ─────────────────────────────────────────────────────────────────
+
+    public String getServerUrl()  { return read("serverUrl",    ""); }
+    public String getApiKey()     { return read("apiKey",       ""); }
+    public String getUserId()     { return read("userId",       "0"); }
+    public String getOrgId()      { return read("orgId",        "0"); }
+    public String getAgentVersion(){ return read("agentVersion","1.0.0"); }
+
+    /**
+     * Returns true only when both SERVER_BASE_URL and API_KEY
+     * are set to real values (not placeholders).
+     */
+    public boolean isConfigured() {
+        return EnvConfig.isSet("SERVER_BASE_URL")
+                && EnvConfig.isSet("API_KEY");
     }
 
     // ─────────────────────────────────────────────────────────────────
     //  DB helpers
     // ─────────────────────────────────────────────────────────────────
 
-    private String read(String key) {
+    private void upsert(String key, String value) {
+        try {
+            Connection conn = DatabaseManager.getInstance().getConnection();
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT OR REPLACE INTO agent_config (key, value) VALUES (?, ?)")) {
+                ps.setString(1, key);
+                ps.setString(2, value);
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            log.warn("SyncConfig upsert '{}' failed: {}", key, e.getMessage());
+        }
+    }
+
+    private String read(String key, String fallback) {
         try {
             Connection conn = DatabaseManager.getInstance().getConnection();
             try (PreparedStatement ps = conn.prepareStatement(
@@ -106,20 +116,6 @@ public class SyncConfig {
         } catch (SQLException e) {
             log.debug("SyncConfig read '{}' failed: {}", key, e.getMessage());
         }
-        return null;
-    }
-
-    private void upsertIfAbsent(String key, String defaultValue) {
-        try {
-            Connection conn = DatabaseManager.getInstance().getConnection();
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT OR IGNORE INTO agent_config (key, value) VALUES (?, ?)")) {
-                ps.setString(1, key);
-                ps.setString(2, defaultValue);
-                ps.executeUpdate();
-            }
-        } catch (SQLException e) {
-            log.warn("SyncConfig seed '{}' failed: {}", key, e.getMessage());
-        }
+        return fallback;
     }
 }

@@ -1,5 +1,6 @@
 package com.activepulse.agent.sync;
 
+import com.activepulse.agent.util.EnvConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,25 +11,27 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 /**
- * HttpSyncClient — POSTs a JSON string to the server.
- *
- * Features:
- *   - Java 11 built-in HttpClient (no extra dependency)
- *   - Bearer token auth via Authorization header
- *   - Exponential backoff retry (up to MAX_RETRIES attempts)
- *   - Returns SyncResult so caller decides how to handle failures
+ * HttpSyncClient — POSTs a JSON string to the server with retry + backoff.
+ * All timeout/retry constants are defined here (no longer in SyncConfig).
  */
 public class HttpSyncClient {
 
     private static final Logger log = LoggerFactory.getLogger(HttpSyncClient.class);
 
+    // ── Constants ─────────────────────────────────────────────────────
+    private static final int  CONNECT_TIMEOUT_SEC  = 10;
+    private static final int  REQUEST_TIMEOUT_SEC  = 30;
+    private static final int  MAX_RETRIES          = 3;
+    private static final long RETRY_BASE_DELAY_MS  = 2_000; // doubles each attempt
+
     private final HttpClient httpClient;
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile HttpSyncClient instance;
+
     private HttpSyncClient() {
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(SyncConfig.CONNECT_TIMEOUT_SEC))
+                .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SEC))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
     }
@@ -46,87 +49,71 @@ public class HttpSyncClient {
     //  Public API
     // ─────────────────────────────────────────────────────────────────
 
-    /**
-     * POSTs the JSON payload to the configured server URL.
-     * Retries up to MAX_RETRIES times with exponential backoff.
-     *
-     * @param  syncId  used only for log context
-     * @param  json    serialized SyncPayload JSON string
-     * @return SyncResult with HTTP status code or error message
-     */
     public SyncResult post(String syncId, String json) {
-        SyncConfig cfg = SyncConfig.getInstance();
-        String url     = cfg.getServerUrl();
-        String apiKey  = cfg.getApiKey();
+        String url    = SyncConfig.getInstance().getServerUrl();
+        String apiKey = EnvConfig.get("API_KEY", "");
 
-        int     attempt     = 0;
-        long    delayMs     = SyncConfig.RETRY_BASE_DELAY_MS;
-        String  lastError   = null;
+        int    attempt   = 0;
+        long   delayMs   = RETRY_BASE_DELAY_MS;
+        String lastError = null;
 
-        while (attempt < SyncConfig.MAX_RETRIES) {
+        while (attempt < MAX_RETRIES) {
             attempt++;
-            log.info("HTTP sync attempt {}/{} — syncId={} url={}",
-                    attempt, SyncConfig.MAX_RETRIES, syncId, url);
+            log.info("HTTP sync attempt {}/{} — syncId={}", attempt, MAX_RETRIES, syncId);
             try {
-                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                HttpRequest.Builder rb = HttpRequest.newBuilder()
                         .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(SyncConfig.REQUEST_TIMEOUT_SEC))
+                        .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SEC))
                         .header("Content-Type", "application/json")
                         .header("Accept",       "application/json")
-                        .header("X-Agent-Version", "1.0.0")
+                        .header("X-Agent-Version", EnvConfig.get("AGENT_VERSION", "1.0.0"))
                         .POST(HttpRequest.BodyPublishers.ofString(json));
 
-                // Auth header — only if apiKey is set
-                if (apiKey != null && !apiKey.isBlank()
-                        && !apiKey.equals("YOUR_API_KEY_HERE")) {
-                    reqBuilder.header("Authorization", "Bearer " + apiKey);
+                if (!apiKey.isBlank() && !apiKey.equals("YOUR_API_KEY_HERE")) {
+                    rb.header("Authorization", "Bearer " + apiKey);
                 }
 
                 HttpResponse<String> response = httpClient.send(
-                        reqBuilder.build(),
-                        HttpResponse.BodyHandlers.ofString()
-                );
+                        rb.build(), HttpResponse.BodyHandlers.ofString());
 
                 int status = response.statusCode();
-                log.info("HTTP response: {} for syncId={}", status, syncId);
+                log.info("HTTP {} for syncId={}", status, syncId);
 
-                if (status >= 200 && status < 300) {
+                if (status >= 200 && status < 300)
                     return SyncResult.success(status, response.body());
-                }
 
-                // 4xx — don't retry (bad request, auth failure, etc.)
                 if (status >= 400 && status < 500) {
-                    log.warn("HTTP {}  — not retrying syncId={} body={}",
-                            status, syncId, truncate(response.body(), 200));
-                    return SyncResult.failure(status, "HTTP " + status + ": " + response.body());
+                    log.warn("HTTP {} — not retrying: {}", status,
+                            truncate(response.body(), 200));
+                    return SyncResult.failure(status, "HTTP " + status);
                 }
 
-                // 5xx — server error, retry
                 lastError = "HTTP " + status;
-                log.warn("HTTP {} — will retry. syncId={}", status, syncId);
+                log.warn("HTTP {} — will retry.", status);
 
             } catch (java.net.ConnectException e) {
                 lastError = "Connection refused: " + e.getMessage();
-                log.warn("Connection failed (attempt {}/{}): {}", attempt, SyncConfig.MAX_RETRIES, lastError);
+                log.warn("Connection failed (attempt {}/{}): {}", attempt, MAX_RETRIES, lastError);
             } catch (java.net.http.HttpTimeoutException e) {
                 lastError = "Timeout: " + e.getMessage();
-                log.warn("Request timed out (attempt {}/{}): {}", attempt, SyncConfig.MAX_RETRIES, lastError);
+                log.warn("Request timed out (attempt {}/{})", attempt, MAX_RETRIES);
             } catch (Exception e) {
                 lastError = e.getClass().getSimpleName() + ": " + e.getMessage();
-                log.warn("HTTP error (attempt {}/{}): {}", attempt, SyncConfig.MAX_RETRIES, lastError);
+                log.warn("HTTP error (attempt {}/{}): {}", attempt, MAX_RETRIES, lastError);
             }
 
-            // Exponential backoff before next retry
-            if (attempt < SyncConfig.MAX_RETRIES) {
+            if (attempt < MAX_RETRIES) {
                 log.info("Waiting {}ms before retry...", delayMs);
                 try { Thread.sleep(delayMs); }
-                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
-                delayMs *= 2;  // double the delay each attempt
+                catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                delayMs *= 2;
             }
         }
 
-        log.error("All {} HTTP sync attempts failed for syncId={} — last error: {}",
-                SyncConfig.MAX_RETRIES, syncId, lastError);
+        log.error("All {} attempts failed for syncId={} — {}", MAX_RETRIES, syncId, lastError);
         return SyncResult.failure(0, lastError);
     }
 
@@ -152,12 +139,7 @@ public class HttpSyncClient {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    //  Utility
-    // ─────────────────────────────────────────────────────────────────
-
     private String truncate(String s, int max) {
-        if (s == null || s.length() <= max) return s;
-        return s.substring(0, max) + "...";
+        return (s == null || s.length() <= max) ? s : s.substring(0, max) + "...";
     }
 }
