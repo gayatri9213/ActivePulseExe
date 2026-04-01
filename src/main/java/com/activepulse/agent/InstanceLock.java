@@ -7,71 +7,100 @@ import java.io.IOException;
 import java.net.BindException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 
 /**
- * InstanceLock — prevents multiple agent instances running simultaneously.
+ * InstanceLock — dual-layer single instance guard.
  *
- * Strategy: bind a ServerSocket on a fixed localhost port (47892).
- * If the port is already taken → another instance is running → exit.
- * The socket is held open for the lifetime of the process.
- * On JVM exit the OS automatically releases it.
+ * Layer 1: File lock  (~/.activepulse/agent.lock)
+ *   - Acquired via NIO FileLock (OS-level, released on process death)
+ *   - Works even if two processes start within milliseconds of each other
  *
- * Why not a lock file?
- *   Lock files are not released on hard crash/kill.
- *   A socket is always released by the OS on process death.
+ * Layer 2: Socket lock (port 47892)
+ *   - Secondary check, useful for detecting already-running instances
+ *
+ * Both layers are released automatically when the JVM exits.
  */
 public class InstanceLock {
 
     private static final Logger log = LoggerFactory.getLogger(InstanceLock.class);
 
-    /** Any unused port in 40000-65535 range. Change if conflicts arise. */
-    private static final int LOCK_PORT = 47892;
+    private static final Path   LOCK_FILE = Paths.get(
+            System.getProperty("user.home"), ".activepulse", "agent.lock");
+    private static final int    LOCK_PORT = 47892;
 
-    private static ServerSocket lockSocket;
+    private static FileChannel  fileChannel;
+    private static FileLock     fileLock;
+    private static ServerSocket socketLock;
 
     private InstanceLock() {}
 
     /**
-     * Tries to acquire the single-instance lock.
-     * @return true  — this is the only instance, safe to continue
-     *         false — another instance is already running, caller should exit
+     * Must be called as the VERY FIRST line in main() before any other code.
+     * @return true  = this is the only instance, safe to continue
+     *         false = another instance is running, caller must System.exit()
      */
     public static boolean acquire() {
+        // ── Layer 1: File lock ────────────────────────────────────────
         try {
-            // Bind to loopback only — not accessible from network
-            lockSocket = new ServerSocket(LOCK_PORT, 1,
-                    InetAddress.getByName("127.0.0.1"));
-            lockSocket.setReuseAddress(false);
-            log.info("Instance lock acquired on port {}", LOCK_PORT);
+            Files.createDirectories(LOCK_FILE.getParent());
+            fileChannel = FileChannel.open(LOCK_FILE,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE);
 
-            // Release on JVM exit (normal shutdown, Ctrl+C, or kill)
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                try {
-                    if (lockSocket != null && !lockSocket.isClosed())
-                        lockSocket.close();
-                } catch (IOException ignored) {}
-            }, "instance-lock-release"));
+            // tryLock() returns null immediately if another process holds it
+            fileLock = fileChannel.tryLock();
 
-            return true;
-
-        } catch (BindException e) {
-            // Port already in use — another instance is running
-            log.warn("Another ActivePulse instance is already running (port {} busy).", LOCK_PORT);
-            return false;
+            if (fileLock == null) {
+                log.warn("Another ActivePulse instance holds the file lock — exiting.");
+                closeQuietly();
+                return false;
+            }
 
         } catch (IOException e) {
-            // Unexpected — allow startup anyway
-            log.warn("Could not acquire instance lock: {} — allowing startup.", e.getMessage());
-            return true;
+            log.warn("File lock failed: {} — trying socket lock only.", e.getMessage());
         }
+
+        // ── Layer 2: Socket lock ──────────────────────────────────────
+        try {
+            socketLock = new ServerSocket(LOCK_PORT, 1,
+                    InetAddress.getByName("127.0.0.1"));
+            socketLock.setReuseAddress(false);
+            log.info("Instance lock acquired (file + socket).");
+        } catch (BindException e) {
+            log.warn("Socket port {} already bound — another instance running.", LOCK_PORT);
+            closeQuietly();
+            return false;
+        } catch (IOException e) {
+            log.warn("Socket lock failed: {} — continuing with file lock only.", e.getMessage());
+        }
+
+        // Release both locks on JVM exit
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            closeQuietly();
+            // Delete lock file on clean exit
+            try { Files.deleteIfExists(LOCK_FILE); } catch (IOException ignored) {}
+        }, "instance-lock-release"));
+
+        return true;
     }
 
     public static void release() {
-        try {
-            if (lockSocket != null && !lockSocket.isClosed()) {
-                lockSocket.close();
-                log.info("Instance lock released.");
-            }
-        } catch (IOException ignored) {}
+        closeQuietly();
+        try { Files.deleteIfExists(LOCK_FILE); } catch (IOException ignored) {}
+    }
+
+    private static void closeQuietly() {
+        try { if (fileLock    != null && fileLock.isValid()) fileLock.release(); }
+        catch (IOException ignored) {}
+        try { if (fileChannel != null && fileChannel.isOpen()) fileChannel.close(); }
+        catch (IOException ignored) {}
+        try { if (socketLock  != null && !socketLock.isClosed()) socketLock.close(); }
+        catch (IOException ignored) {}
     }
 }

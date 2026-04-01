@@ -1,8 +1,8 @@
 package com.activepulse.agent;
 
 import com.activepulse.agent.db.DatabaseManager;
-import com.activepulse.agent.monitor.AppConfigManager;
 import com.activepulse.agent.monitor.AppActivityRecorder;
+import com.activepulse.agent.monitor.AppConfigManager;
 import com.activepulse.agent.monitor.InputActivityMonitor;
 import com.activepulse.agent.monitor.InputActivityRecorder;
 import com.activepulse.agent.monitor.ScreenshotRecorder;
@@ -12,11 +12,13 @@ import com.activepulse.agent.monitor.UserStatusTracker;
 import com.activepulse.agent.scheduler.AgentScheduler;
 import com.activepulse.agent.sync.SyncConfig;
 import com.activepulse.agent.sync.SyncManager;
+import com.activepulse.agent.util.EnvConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.*;
+import java.awt.Toolkit;
 import java.io.IOException;
+import java.net.NetworkInterface;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -26,6 +28,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Enumeration;
 
 public class ActivePulseApplication {
 
@@ -36,26 +39,35 @@ public class ActivePulseApplication {
     //  Entry point
     //
     //  Supported CLI flags:
-    //    --install    install auto-start entry for current OS and exit
-    //    --uninstall  remove  auto-start entry for current OS and exit
-    //    (no args)    run the agent normally
+    //    --install    install auto-start and exit
+    //    --uninstall  remove  auto-start and exit
+    //    (no args)    run normally
     // ─────────────────────────────────────────────────────────────────
 
     public static void main(String[] args) {
-        // ── MUST be the absolute first lines before any class loads ───
+
+        // ── STEP 1: Instance lock — MUST be the very first check ──────
+        // Before ANY logging, AWT, or DB init.
+        // Prevents duplicate tray icons and double logs on machine restart.
+        if (!InstanceLock.acquire()) {
+            System.err.println("[ActivePulse] Already running — exiting.");
+            System.exit(0);
+        }
+
+        // ── STEP 2: AWT headless flag — before any AWT class loads ────
         System.setProperty("java.awt.headless", "false");
-        // Boot AWT toolkit immediately on main thread
         Toolkit.getDefaultToolkit();
 
+        // ── STEP 3: Ensure log/data directories exist ─────────────────
         ensureDirectories();
 
+        // ── STEP 4: Handle CLI flags ───────────────────────────────────
         if (args.length > 0) {
             switch (args[0].toLowerCase()) {
                 case "--install" -> {
-                    // DB must be ready before AutoStartManager seeds config
                     DatabaseManager.getInstance().init();
                     AutoStartManager.getInstance().install();
-                    log.info("Auto-start installed. Run the agent normally to start monitoring.");
+                    log.info("Auto-start installed.");
                     System.exit(0);
                 }
                 case "--uninstall" -> {
@@ -63,7 +75,7 @@ public class ActivePulseApplication {
                     log.info("Auto-start removed.");
                     System.exit(0);
                 }
-                default -> log.warn("Unknown argument '{}' — starting agent normally.", args[0]);
+                default -> log.warn("Unknown argument '{}' — starting normally.", args[0]);
             }
         }
 
@@ -71,7 +83,7 @@ public class ActivePulseApplication {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Agent startup
+    //  Agent startup — ordered carefully
     // ─────────────────────────────────────────────────────────────────
 
     private void start() {
@@ -81,45 +93,46 @@ public class ActivePulseApplication {
         log.info("Agent starting at {}",
                 LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
-        // ── 1. Database
+        // ── 1. Tray icon — show immediately so user sees agent is starting
+        SystemTrayManager.getInstance().install();
+
+        // ── 2. Database — must be before any recorder or sync
         DatabaseManager.getInstance().init();
         writeAgentConfig();
         SyncConfig.getInstance().seed();
 
-        // ── 2. Init sync directories + session report
+        // ── 3. Init sync directories + session
         SyncManager.getInstance();
         AppConfigManager.getInstance().start();
 
-        // ── 2. Init sync directories immediately on startup
-        SyncManager.getInstance();
+        // ── 4. Auto-start — re-register on every startup (keeps path current)
+        installAutoStart();
 
-        // ── 2. Auto-start: install silently on first run if not yet registered
-        SystemTrayManager.getInstance().install();
-        installAutoStartIfNeeded();
+        // ── 5. System lock detector — before monitors so lock state is known
+        SystemLockDetector.getInstance().start();
 
-        // ── 3. Monitors (continuous / event-driven)
-        SystemLockDetector.getInstance().start();   // lock detection first
+        // ── 6. Monitors
         AppActivityRecorder.getInstance().start();
         InputActivityMonitor.getInstance().start();
         InputActivityRecorder.getInstance().start();
         ScreenshotRecorder.getInstance().start();
         SystemMetricsRecorder.getInstance().start();
 
-        // ── 4. Quartz — all periodic jobs
+        // ── 7. Quartz scheduler — drives all periodic jobs
         AgentScheduler.getInstance().start();
 
         registerShutdownHook();
+
         log.info("Agent is running. Press Ctrl+C to stop.");
         keepAlive();
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Auto-start: silent install on first run
+    //  Auto-start
     // ─────────────────────────────────────────────────────────────────
 
-    private void installAutoStartIfNeeded() {
-        // Always re-register — keeps JAR path + Java path current
-        // even if the JAR was moved or Java was upgraded
+    private void installAutoStart() {
+        // Always re-register to keep JAR path and Java path current
         AutoStartManager.getInstance().install();
     }
 
@@ -134,21 +147,23 @@ public class ActivePulseApplication {
                     "INSERT OR REPLACE INTO agent_config (key, value) VALUES (?, ?)")) {
 
                 String[][] config = {
-                        {"deviceId",     "DEV-" + getMachineId()},
+                        {"deviceId",     "DEV-" + getMacAddress()},
                         {"osName",       System.getProperty("os.name")},
                         {"osVersion",    System.getProperty("os.version")},
                         {"osArch",       System.getProperty("os.arch")},
                         {"javaVersion",  System.getProperty("java.version")},
                         {"userName",     System.getProperty("user.name")},
-                        {"agentVersion", "1.0.0"},
+                        {"agentVersion", EnvConfig.get("AGENT_VERSION", "1.0.0")},
                         {"startedAt",    Instant.now().toString()},
+                        {"sessionStart", Instant.now().toString()},
                 };
                 for (String[] kv : config) {
                     ps.setString(1, kv[0]);
                     ps.setString(2, kv[1]);
                     ps.executeUpdate();
                 }
-                log.info("Agent config written — device: DEV-{}", getMachineId());
+                log.info("Agent config written — device: DEV-{} user: {}",
+                        getMacAddress(), System.getProperty("user.name"));
             }
         } catch (SQLException e) {
             log.error("Failed to write agent config", e);
@@ -156,13 +171,15 @@ public class ActivePulseApplication {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Graceful shutdown — reverse startup order
+    //  Graceful shutdown — reverse of startup order
     // ─────────────────────────────────────────────────────────────────
 
     private void registerShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutdown signal received — stopping agent...");
             running = false;
+
+            // Stop in reverse startup order
             AgentScheduler.getInstance().stop();
             AppActivityRecorder.getInstance().stop();
             InputActivityRecorder.getInstance().stop();
@@ -173,7 +190,9 @@ public class ActivePulseApplication {
             AppConfigManager.getInstance().stop();
             UserStatusTracker.getInstance().setStopped();
             SystemTrayManager.getInstance().remove();
+            InstanceLock.release();
             DatabaseManager.getInstance().close();
+
             log.info("ActivePulse Agent stopped cleanly.");
         }, "shutdown-hook"));
     }
@@ -184,8 +203,9 @@ public class ActivePulseApplication {
 
     private void keepAlive() {
         while (running) {
-            try { Thread.sleep(1_000); }
-            catch (InterruptedException e) {
+            try {
+                Thread.sleep(1_000);
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 running = false;
             }
@@ -193,31 +213,31 @@ public class ActivePulseApplication {
     }
 
     /**
-     * Derives a stable device ID from the MAC address of the
-     * primary non-loopback network interface.
-     * Format: DEV-AABBCCDDEEFF
-     * Falls back to a hostname hash if MAC is unavailable.
+     * Stable device ID from MAC address of first non-loopback NIC.
+     * Format: A4C3F0112233
+     * Fallback: hash of username + hostname
      */
-    private String getMachineId() {
+    private String getMacAddress() {
         try {
-            java.util.Enumeration<java.net.NetworkInterface> nics =
-                    java.net.NetworkInterface.getNetworkInterfaces();
+            Enumeration<NetworkInterface> nics = NetworkInterface.getNetworkInterfaces();
             while (nics != null && nics.hasMoreElements()) {
-                java.net.NetworkInterface nic = nics.nextElement();
+                NetworkInterface nic = nics.nextElement();
                 if (nic.isLoopback() || !nic.isUp()) continue;
                 byte[] mac = nic.getHardwareAddress();
                 if (mac == null || mac.length == 0) continue;
                 StringBuilder sb = new StringBuilder();
                 for (byte b : mac) sb.append(String.format("%02X", b));
-                return sb.toString();   // e.g. "A4C3F0112233"
+                return sb.toString();
             }
         } catch (Exception ignored) {}
-        // Fallback: hash of username + hostname
+        // Fallback
         try {
             String raw = System.getProperty("user.name")
                     + java.net.InetAddress.getLocalHost().getHostName();
             return String.valueOf(Math.abs(raw.hashCode()));
-        } catch (Exception e) { return "000000"; }
+        } catch (Exception e) {
+            return "000000";
+        }
     }
 
     private static void ensureDirectories() {
