@@ -15,6 +15,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * SyncPayloadWriter — serializes a SyncPayload to pretty-printed JSON
@@ -27,9 +28,6 @@ public class SyncPayloadWriter {
 
     private static final Logger log = LoggerFactory.getLogger(SyncPayloadWriter.class);
 
-    private static final Path SYNC_DIR =
-            Paths.get(System.getProperty("user.home"), ".activepulse", "sync");
-
     private final ObjectMapper mapper;
 
     // ── Singleton ────────────────────────────────────────────────────
@@ -38,7 +36,8 @@ public class SyncPayloadWriter {
     private SyncPayloadWriter() {
         mapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT);  // pretty-print
-        ensureSyncDir();
+        // Sync folder creation disabled - no local file storage
+        log.info("SyncPayloadWriter initialized - local sync folder disabled");
     }
 
     public static SyncPayloadWriter getInstance() {
@@ -59,29 +58,15 @@ public class SyncPayloadWriter {
      * logs to sync_log, then marks all rows as synced.
      */
     public void write(SyncPayload payload) {
-        if (payload == null) return;
-
-        try {
-            // Serialize
-            String json = mapper.writeValueAsString(payload);
-
-            // Write to ~/.activepulse/sync/<syncId>.json
-            Path outFile = SYNC_DIR.resolve(payload.getSyncId() + ".json");
-            Files.writeString(outFile, json);
-
-            log.info("Sync payload written → {}", outFile.getFileName());
-            log.info("Payload preview:\n{}", buildPreview(payload));
-
-            // Record in sync_log
-            recordSyncLog(payload, "success", null);
-
-            // Mark all included rows as synced in the DB
-            SyncPayloadBuilder.getInstance().markAsSynced(payload);
-
-        } catch (IOException e) {
-            log.error("Failed to write sync payload: {}", e.getMessage());
-            recordSyncLog(payload, "failed", e.getMessage());
-        }
+        Objects.requireNonNull(payload);
+        log.info("Sync payload generated for ID: {}", payload.getSyncId());
+        
+        // Local file storage disabled - only server sync supported
+        log.info("Local sync file storage disabled - payload not saved locally");
+        log.info("Payload preview:\n{}", buildPreview(payload));
+        
+        // Record in sync_log table (method handles SQLException internally)
+        recordSyncLog(payload, "success", null);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -137,13 +122,5 @@ public class SyncPayloadWriter {
                 p.getSystemMetrics() != null ? p.getSystemMetrics().getMemoryUsageAvg() : 0.0,
                 p.getSystemMetrics() != null ? p.getSystemMetrics().getNetworkStatus()  : "n/a"
         );
-    }
-
-    private void ensureSyncDir() {
-        try {
-            if (!Files.exists(SYNC_DIR)) Files.createDirectories(SYNC_DIR);
-        } catch (IOException e) {
-            log.error("Cannot create sync directory: {}", e.getMessage());
-        }
     }
 }

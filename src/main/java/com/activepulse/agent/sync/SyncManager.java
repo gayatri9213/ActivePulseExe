@@ -18,6 +18,9 @@ import java.net.http.HttpRequest.BodyPublishers;
 import java.nio.file.*;
 import java.sql.*;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.zip.*;
 
@@ -32,6 +35,8 @@ import java.util.zip.*;
  * Endpoint 3 — POST /api/sync/screenshots/chunk (chunked, > 10 MB)
  *
  * When SERVER_BASE_URL / API_KEY not configured → saves JSON locally.
+ *
+ * Updated: After successful sync, screenshots are deleted from original folder and not stored in sync folder
  */
 public class SyncManager {
 
@@ -40,10 +45,6 @@ public class SyncManager {
     private static final long THRESHOLD_BYTES  = 10L * 1024 * 1024;
     private static final long CHUNK_SIZE_BYTES =  5L * 1024 * 1024;
 
-    private static final Path SYNC_DIR      = Paths.get(System.getProperty("user.home"), ".activepulse", "sync");
-    private static final Path SENT_DIR      = SYNC_DIR.resolve("sent");
-    private static final Path SYNCED_SS_DIR = SYNC_DIR.resolve("screenshots");
-
     private final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
     private final HttpClient   http   = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
@@ -51,7 +52,10 @@ public class SyncManager {
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile SyncManager instance;
-    private SyncManager() { ensureDirs(); }
+    private SyncManager() {
+        // Sync folder creation disabled - no local file storage
+        log.info("SyncManager initialized - local sync folder disabled");
+    }
 
     public static SyncManager getInstance() {
         if (instance == null) {
@@ -82,12 +86,14 @@ public class SyncManager {
     // ─────────────────────────────────────────────────────────────────
 
     public void sync() {
-        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         log.info("  Sync cycle — server configured: {}", isConfigured());
 
         String syncId    = "SYNC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         String syncStart = TimeUtil.nowIST();
         Connection conn  = DatabaseManager.getInstance().getConnection();
+
+        boolean dataSyncSuccess = false;
 
         // ── 1. Data sync ──────────────────────────────────────────────
         List<Long> activityIds = new ArrayList<>();
@@ -96,39 +102,173 @@ public class SyncManager {
                 buildDataPayload(conn, syncId, syncStart, activityIds, strokeIds);
 
         if (dataPayload != null) {
-            boolean ok = isConfigured()
-                    ? postDataPayload(dataPayload, syncId)
-                    : saveLocally(syncId, syncStart, dataPayload);
-
-            if (ok) {
-                markSynced(conn, "activity_log",          activityIds);
-                markSynced(conn, "keyboard_mouse_strokes", strokeIds);
+            if (isConfigured()) {
+                dataSyncSuccess = postDataPayload(dataPayload, syncId);
+                if (dataSyncSuccess) {
+                    markSynced(conn, "activity_log",          activityIds);
+                    markSynced(conn, "keyboard_mouse_strokes", strokeIds);
+                    log.info("  Data sync completed successfully");
+                } else {
+                    log.warn("  Data sync failed - skipping screenshot sync");
+                }
+            } else {
+                log.warn("  Server not configured - data not synced and will remain in database");
+                dataSyncSuccess = false;
             }
         } else {
             log.info("  No activity data to sync.");
+            dataSyncSuccess = true; // No data is considered success
         }
 
         // ── 2. Screenshot sync ────────────────────────────────────────
-        List<Long>   screenshotIds   = new ArrayList<>();
-        List<String> screenshotPaths = new ArrayList<>();
-        readScreenshots(conn, screenshotIds, screenshotPaths);
+        // Only proceed with screenshot sync if data sync was successful
+        if (dataSyncSuccess) {
+            List<Long>   screenshotIds   = new ArrayList<>();
+            List<String> screenshotPaths = new ArrayList<>();
+            readScreenshots(conn, screenshotIds, screenshotPaths);
 
-        if (!screenshotPaths.isEmpty()) {
-            Path zipFile = buildZip(screenshotPaths, syncId);
-            if (zipFile != null) {
-                boolean ok = isConfigured()
-                        ? uploadScreenshots(zipFile, syncId)
-                        : moveToSyncedDir(screenshotPaths);
+            if (!screenshotPaths.isEmpty()) {
+                if (isConfigured()) {
+                    Path zipFile = buildZip(screenshotPaths, syncId);
+                    if (zipFile != null) {
+                        boolean screenshotSyncSuccess = uploadScreenshots(zipFile, syncId, screenshotPaths);
 
-                if (ok) markSynced(conn, "screenshots", screenshotIds);
-                try { Files.deleteIfExists(zipFile); } catch (IOException ignored) {}
+                        if (screenshotSyncSuccess) {
+                            markSynced(conn, "screenshots", screenshotIds);
+                            log.info("  Screenshot sync completed successfully");
+                        } else {
+                            log.warn("  Screenshot sync failed");
+                        }
+                        try { Files.deleteIfExists(zipFile); } catch (IOException ignored) {}
+                    }
+                } else {
+                    log.warn("  Server not configured - screenshots not synced and will remain in database");
+                }
+            } else {
+                log.info("  No screenshots to sync.");
             }
-        } else {
-            log.info("  No screenshots to sync.");
         }
 
         recordSyncLog(conn, syncId, syncStart, TimeUtil.nowIST());
-        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  End-of-day sync — called at midnight to ensure all data is synced
+    // ─────────────────────────────────────────────────────────────────
+
+    public void syncEndOfDay() {
+        log.info("🌅 End-of-day sync triggered - ensuring all data for today is synced");
+        
+        String currentTime = TimeUtil.nowIST();
+        String currentDate = currentTime.split(" ")[0];
+        
+        // Check if this is actually end-of-day (23:55 or later)
+        String[] timeParts = currentTime.split(" ")[1].split(":");
+        int hour = Integer.parseInt(timeParts[0]);
+        
+        if (hour < 23) {
+            log.info("Skipping end-of-day sync - current time {} is before 23:55", currentTime);
+            return;
+        }
+        
+        log.info("Performing end-of-day sync for date: {}", currentDate);
+        
+        // Force a regular sync to catch any remaining data
+        sync();
+        
+        // Additional check: ensure no unsynced data remains for today
+        try {
+            Connection conn = DatabaseManager.getInstance().getConnection();
+            
+            // Check for any unsynced activity logs for today
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT COUNT(*) as count FROM activity_log 
+                    WHERE DATE(recorded_at) = ? AND synced = 0
+                    """)) {
+                ps.setString(1, currentDate);
+                ResultSet rs = ps.executeQuery();
+                if (rs.next() && rs.getInt("count") > 0) {
+                    log.warn("Found {} unsynced activity records for today - performing additional sync", rs.getInt("count"));
+                    sync(); // Try again
+                }
+            }
+            
+            // Check for any unsynced strokes for today
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT COUNT(*) as count FROM keyboard_mouse_strokes 
+                    WHERE DATE(recorded_at) = ? AND synced = 0
+                    """)) {
+                ps.setString(1, currentDate);
+                ResultSet rs = ps.executeQuery();
+                if (rs.next() && rs.getInt("count") > 0) {
+                    log.warn("Found {} unsynced stroke records for today - performing additional sync", rs.getInt("count"));
+                    sync(); // Try again
+                }
+            }
+            
+        } catch (SQLException e) {
+            log.error("Error checking for unsynced data during end-of-day sync: {}", e.getMessage());
+        }
+        
+        log.info("🌅 End-of-day sync completed");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  Shutdown sync — called before machine shutdown to ensure data safety
+    // ─────────────────────────────────────────────────────────────────
+
+    public void syncBeforeShutdown() {
+        log.info("🔌 Shutdown sync triggered - ensuring all data is synced before shutdown");
+        
+        String currentTime = TimeUtil.nowIST();
+        log.info("Starting shutdown sync at: {}", currentTime);
+        
+        try {
+            // Force a regular sync to sync all pending data
+            sync();
+            
+            // Wait a moment for sync to complete
+            Thread.sleep(2000);
+            
+            // Final verification: check if any data remains unsynced
+            Connection conn = DatabaseManager.getInstance().getConnection();
+            
+            // Check activity logs
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT COUNT(*) as count FROM activity_log WHERE synced = 0
+                    """)) {
+                ResultSet rs = ps.executeQuery();
+                if (rs.next() && rs.getInt("count") > 0) {
+                    log.warn("⚠️  {} activity records remain unsynced after shutdown sync", rs.getInt("count"));
+                }
+            }
+            
+            // Check keyboard/mouse strokes
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT COUNT(*) as count FROM keyboard_mouse_strokes WHERE synced = 0
+                    """)) {
+                ResultSet rs = ps.executeQuery();
+                if (rs.next() && rs.getInt("count") > 0) {
+                    log.warn("⚠️  {} stroke records remain unsynced after shutdown sync", rs.getInt("count"));
+                }
+            }
+            
+            // Check screenshots
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    SELECT COUNT(*) as count FROM screenshots WHERE synced = 0
+                    """)) {
+                ResultSet rs = ps.executeQuery();
+                if (rs.next() && rs.getInt("count") > 0) {
+                    log.warn("⚠️  {} screenshots remain unsynced after shutdown sync", rs.getInt("count"));
+                }
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ Error during shutdown sync: {}", e.getMessage());
+        }
+        
+        log.info("🔌 Shutdown sync completed - data should be safe");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -279,31 +419,34 @@ public class SyncManager {
     // ─────────────────────────────────────────────────────────────────
 
     private Path buildZip(List<String> paths, String syncId) {
-        Path zipPath = SYNC_DIR.resolve(syncId + "-screenshots.zip");
-        try (ZipOutputStream zos = new ZipOutputStream(
-                new BufferedOutputStream(Files.newOutputStream(zipPath)))) {
-            for (String fp : paths) {
-                Path src = Paths.get(fp);
-                if (!Files.exists(src)) continue;
-                zos.putNextEntry(new ZipEntry(src.getFileName().toString()));
-                Files.copy(src, zos);
-                zos.closeEntry();
+        try {
+            // Use temporary directory instead of sync folder
+            Path zipPath = Files.createTempFile(syncId + "-screenshots", ".zip");
+            try (ZipOutputStream zos = new ZipOutputStream(
+                    new BufferedOutputStream(Files.newOutputStream(zipPath)))) {
+                for (String fp : paths) {
+                    Path src = Paths.get(fp);
+                    if (!Files.exists(src)) continue;
+                    zos.putNextEntry(new ZipEntry(src.getFileName().toString()));
+                    Files.copy(src, zos);
+                    zos.closeEntry();
+                }
+                log.info("  ZIP built: {} files, {} KB",
+                        paths.size(), Files.size(zipPath) / 1024);
+                return zipPath;
             }
-            log.info("  ZIP built: {} files, {} KB",
-                    paths.size(), Files.size(zipPath) / 1024);
-            return zipPath;
         } catch (IOException e) {
             log.error("  buildZip failed: {}", e.getMessage());
             return null;
         }
     }
 
-    private boolean uploadScreenshots(Path zipFile, String syncId) {
+    private boolean uploadScreenshots(Path zipFile, String syncId, List<String> screenshotPaths) {
         try {
             long size = Files.size(zipFile);
             return size <= THRESHOLD_BYTES
-                    ? uploadSingle(zipFile, syncId)
-                    : uploadChunked(zipFile, syncId);
+                    ? uploadSingle(zipFile, syncId, screenshotPaths)
+                    : uploadChunked(zipFile, syncId, screenshotPaths);
         } catch (IOException e) {
             log.error("  uploadScreenshots error: {}", e.getMessage());
             return false;
@@ -311,7 +454,7 @@ public class SyncManager {
     }
 
     /** POST /api/sync/screenshots */
-    private boolean uploadSingle(Path zipFile, String syncId) {
+    private boolean uploadSingle(Path zipFile, String syncId, List<String> screenshotPaths) {
         try {
             String boundary = "Boundary" + UUID.randomUUID().toString().replace("-", "");
             String url      = baseUrl() + "/api/sync/screenshots";
@@ -339,7 +482,7 @@ public class SyncManager {
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             log.info("  POST /api/sync/screenshots → HTTP {}", resp.statusCode());
             if (resp.statusCode() == 200) {
-                moveToSyncedDir(List.of(zipFile.toString()));
+                deleteOriginalScreenshots(screenshotPaths);
                 return true;
             }
             log.warn("  Screenshot upload failed: {}", truncate(resp.body(), 200));
@@ -351,7 +494,7 @@ public class SyncManager {
     }
 
     /** POST /api/sync/screenshots/chunk — 5 MB chunks */
-    private boolean uploadChunked(Path zipFile, String syncId) {
+    private boolean uploadChunked(Path zipFile, String syncId, List<String> screenshotPaths) {
         try {
             byte[] all         = Files.readAllBytes(zipFile);
             int    totalChunks = (int) Math.ceil((double) all.length / CHUNK_SIZE_BYTES);
@@ -401,7 +544,7 @@ public class SyncManager {
                 // Last chunk — final response
                 if (i == totalChunks - 1) {
                     log.info("  Chunked upload complete.");
-                    moveToSyncedDir(List.of(zipFile.toString()));
+                    deleteOriginalScreenshots(screenshotPaths);
                     return true;
                 }
             }
@@ -432,46 +575,6 @@ public class SyncManager {
         out.write("Content-Type: application/octet-stream\r\n\r\n".getBytes());
         out.write(data);
         out.write("\r\n".getBytes());
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Local fallback
-    // ─────────────────────────────────────────────────────────────────
-
-    private boolean saveLocally(String syncId, String syncStart,
-                                Map<String, Object> payload) {
-        try {
-            String ts    = TimeUtil.nowIST().replace(" ", "_").replace(":", "-");
-            Path outFile = SENT_DIR.resolve(syncId + "_" + ts + ".json");
-            Files.writeString(outFile, mapper.writeValueAsString(payload));
-            log.info("  Saved locally (no server configured) → {}", outFile.getFileName());
-            return true;
-        } catch (Exception e) {
-            log.error("  saveLocally failed: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    private boolean moveToSyncedDir(List<String> paths) {
-        for (String fp : paths) {
-            try {
-                Path src  = Paths.get(fp);
-                if (!Files.exists(src)) continue;
-                Path dest = SYNCED_SS_DIR.resolve(src.getFileName());
-                int  sfx  = 1;
-                while (Files.exists(dest)) {
-                    String n = src.getFileName().toString();
-                    int dot  = n.lastIndexOf('.');
-                    dest = SYNCED_SS_DIR.resolve(
-                            (dot > 0 ? n.substring(0, dot) : n) + "_" + sfx++
-                                    + (dot > 0 ? n.substring(dot) : ""));
-                }
-                Files.move(src, dest);
-            } catch (IOException e) {
-                log.warn("  move failed {}: {}", fp, e.getMessage());
-            }
-        }
-        return true;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -535,12 +638,14 @@ public class SyncManager {
         return (s == null || s.length() <= max) ? s : s.substring(0, max) + "...";
     }
 
-    private void ensureDirs() {
-        try {
-            Files.createDirectories(SENT_DIR);
-            Files.createDirectories(SYNCED_SS_DIR);
-        } catch (IOException e) {
-            log.error("Cannot create sync dirs: {}", e.getMessage());
+    private void deleteOriginalScreenshots(List<String> screenshotPaths) {
+        for (String path : screenshotPaths) {
+            try {
+                Files.deleteIfExists(Paths.get(path));
+                log.debug("Deleted original screenshot: {}", path);
+            } catch (IOException e) {
+                log.warn("Failed to delete original screenshot {}: {}", path, e.getMessage());
+            }
         }
     }
 }

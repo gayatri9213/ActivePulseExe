@@ -215,12 +215,20 @@ public class SystemLockDetector {
         locked.set(true);
         log.info("System LOCKED — setting status to AWAY.");
         UserStatusTracker.getInstance().setAway();
+        AppConfigManager.getInstance().setSleepStatus();
+        
+        // Save any pending activities with AWAY status
+        AppActivityRecorder.getInstance().onSystemLocked();
     }
 
     private void onUnlocked() {
         locked.set(false);
         log.info("System UNLOCKED — resuming monitoring.");
         UserStatusTracker.getInstance().setUnlocked();
+        AppConfigManager.getInstance().setActiveStatus();
+        
+        // Check if we need to split multi-day away sessions
+        AppConfigManager.getInstance().splitMultiDayAwaySession();
     }
 
     private boolean isWindows() {

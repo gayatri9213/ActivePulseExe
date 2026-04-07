@@ -1,5 +1,6 @@
 package com.activepulse.agent.scheduler;
 
+import com.activepulse.agent.scheduler.job.EndOfDaySyncJob;
 import com.activepulse.agent.scheduler.job.InputFlushJob;
 import com.activepulse.agent.scheduler.job.ScreenshotJob;
 import com.activepulse.agent.scheduler.job.SyncJob;
@@ -12,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import static org.quartz.JobBuilder.newJob;
 import static org.quartz.SimpleScheduleBuilder.simpleSchedule;
 import static org.quartz.TriggerBuilder.newTrigger;
+import static org.quartz.CronScheduleBuilder.cronSchedule;
 
 /**
  * AgentScheduler — single Quartz scheduler that owns ALL periodic jobs.
@@ -24,6 +26,7 @@ import static org.quartz.TriggerBuilder.newTrigger;
  * │ SystemMetricsJob     │ 60 seconds  │ system_metrics             │
  * │ ScreenshotJob        │  5 minutes  │ screenshots + disk         │
  * │ SyncJob              │  5 minutes  │ sync/sent/*.json           │
+ * │ EndOfDaySyncJob      │ 23:55 daily │ end-of-day data sync       │
  * └──────────────────────┴─────────────┴────────────────────────────┘
  */
 public class AgentScheduler {
@@ -89,7 +92,7 @@ public class AgentScheduler {
                     0   // 0 = fire immediately on start
             );
 
-            // ── 4. Sync — every 5 min, starts after 5 min ────────────
+            // ── 4. Sync — every 10 min, starts after 10 min ───────────
             registerJob(SyncJob.class,
                     "sync", "sync",
                     simpleSchedule()
@@ -98,13 +101,20 @@ public class AgentScheduler {
                     SYNC_INTERVAL_MINS * 60  // wait one full interval first
             );
 
+            // ── 5. End-of-day sync — every day at 23:55 ──────────────────
+            registerCronJob(EndOfDaySyncJob.class,
+                    "end-of-day-sync", "sync",
+                    "0 55 23 * * ?"  // 23:55 every day
+            );
+
             scheduler.start();
 
             log.info("AgentScheduler started.");
-            log.info("  input-flush   : every {}s", INPUT_INTERVAL_SECS);
-            log.info("  system-metrics: every {}s", SYSTEM_METRICS_SECS);
-            log.info("  screenshot    : every {}m (immediate)", SCREENSHOT_INTERVAL_MINS);
-            log.info("  sync          : every {}m", SYNC_INTERVAL_MINS);
+            log.info("  input-flush      : every {}s", INPUT_INTERVAL_SECS);
+            log.info("  system-metrics   : every {}s", SYSTEM_METRICS_SECS);
+            log.info("  screenshot       : every {}m (immediate)", SCREENSHOT_INTERVAL_MINS);
+            log.info("  sync             : every {}m", SYNC_INTERVAL_MINS);
+            log.info("  end-of-day-sync  : daily at 23:55");
 
         } catch (SchedulerException e) {
             log.error("Failed to start AgentScheduler", e);
@@ -149,5 +159,22 @@ public class AgentScheduler {
 
         scheduler.scheduleJob(job, tb.build());
         log.debug("Registered job: {}/{}", group, name);
+    }
+
+    private void registerCronJob(Class<? extends Job> jobClass,
+                                String name, String group,
+                                String cronExpression) throws SchedulerException {
+
+        JobDetail job = newJob(jobClass)
+                .withIdentity(name, group)
+                .build();
+
+        Trigger trigger = newTrigger()
+                .withIdentity(name + "-trigger", group)
+                .withSchedule(cronSchedule(cronExpression))
+                .build();
+
+        scheduler.scheduleJob(job, trigger);
+        log.debug("Registered cron job: {}/{} with expression: {}", group, name, cronExpression);
     }
 }
