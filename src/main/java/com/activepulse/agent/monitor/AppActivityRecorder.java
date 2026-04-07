@@ -120,13 +120,19 @@ public class AppActivityRecorder {
             Instant now = Instant.now();
 
             if (!active.isSameWindow(currentWindow)) {
-                if (!currentWindow.isEmpty())
-                    saveActivity(currentWindow, null, windowStart, now, windowStatusType);
+                if (!currentWindow.isEmpty()) {
+                    // Use current activity type, not cached status, to ensure correct status during lock
+                    String currentActivityType = resolveActivityType();
+                    saveActivity(currentWindow, null, windowStart, now, currentActivityType);
+                }
 
                 if (!active.isSameApp(currentWindow)) {
                     synchronized (this) {
-                        if (currentUrl != null && urlStart != null)
-                            saveActivity(currentWindow, currentUrl, urlStart, now, urlStatusType);
+                        if (currentUrl != null && urlStart != null) {
+                            // Use current activity type, not cached status, to ensure correct status during lock
+                            String currentActivityType = resolveActivityType();
+                            saveActivity(currentWindow, currentUrl, urlStart, now, currentActivityType);
+                        }
                         currentUrl = null; currentDomain = null; urlStart = null;
                     }
                 }
@@ -171,12 +177,14 @@ public class AppActivityRecorder {
             urlStart        = now;
             urlStatusType   = resolveActivityType(); // capture status at URL START
         } else if (!currentUrl.equals(newUrl)) {
-            saveActivity(active, currentUrl, urlStart, now, urlStatusType);
-            log.info("URL → {} | {}", result.domain(), truncate(newUrl, 80));
+            // Use current activity type, not cached status, to ensure correct status during lock
+            String currentActivityType = resolveActivityType();
+            saveActivity(active, currentUrl, urlStart, now, currentActivityType);
+            log.info("URL → {} | {} [{}]", result.domain(), truncate(newUrl, 80), currentActivityType);
             currentUrl      = newUrl;
             currentDomain   = result.domain();
             urlStart        = now;
-            urlStatusType   = resolveActivityType();
+            urlStatusType   = currentActivityType;
         }
     }
 
@@ -187,18 +195,16 @@ public class AppActivityRecorder {
     private synchronized void flushUrl() {
         if (currentUrl == null || urlStart == null) return;
         
-        // Don't flush if system is locked - this prevents sending ACTIVE status during sleep
-        if (SystemLockDetector.getInstance().isLocked()) {
-            log.debug("Skipping URL flush during system lock");
-            return;
-        }
-        
         Instant now = Instant.now();
-        log.info("URL flush → {} {}s", currentDomain,
-                now.getEpochSecond() - urlStart.getEpochSecond());
-        saveActivity(currentWindow, currentUrl, urlStart, now, urlStatusType);
+        
+        // Always use current activity type, not cached status, to ensure correct status during lock
+        String currentActivityType = resolveActivityType();
+        
+        log.info("URL flush → {} {}s [{}]", currentDomain,
+                now.getEpochSecond() - urlStart.getEpochSecond(), currentActivityType);
+        saveActivity(currentWindow, currentUrl, urlStart, now, currentActivityType);
         urlStart      = now;
-        urlStatusType = resolveActivityType();
+        urlStatusType = currentActivityType;
     }
 
     // ─────────────────────────────────────────────────────────────────
