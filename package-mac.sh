@@ -69,42 +69,15 @@ COMMON_ARGS=(
 [ -n "$ICON_ARG" ]    && COMMON_ARGS+=($ICON_ARG)
 [ -n "$LICENSE_ARG" ] && COMMON_ARGS+=($LICENSE_ARG)
 
-
-# ── Build Intel (x64) ─────────────────────────────────
-echo "[1/3] Building macOS Intel (x64)..."
-
-jpackage \
-  --type dmg \
-  "${COMMON_ARGS[@]}" \
-  --dest "$OUT_DIR" \
-  --mac-package-name "${APP_NAME}-x64" \
-  --mac-package-architecture x64
-
-[ $? -ne 0 ] && echo "[ERROR] x64 build failed." && exit 1
-echo "[OK] x64 .dmg created."
-
-
-# ── Build ARM64 ───────────────────────────────────────
-echo "[2/3] Building macOS ARM64..."
-
-jpackage \
-  --type dmg \
-  "${COMMON_ARGS[@]}" \
-  --dest "$OUT_DIR" \
-  --mac-package-name "${APP_NAME}-ARM64" \
-  --mac-package-architecture arm64
-
-[ $? -ne 0 ] && echo "[ERROR] ARM64 build failed." && exit 1
-echo "[OK] ARM64 .dmg created."
-
+# ── Build .dmg (drag to Applications) ─────────────────────────────────
+echo "[1/2] Building .dmg..."
+jpackage --type dmg "${COMMON_ARGS[@]}" --dest "$OUT_DIR"
+[ $? -ne 0 ] && echo "[ERROR] .dmg build failed." && exit 1
+echo "[OK] .dmg created."
 
 # ── Build .pkg (system installer with wizard) ──────────────────────────
-echo "[3/3] Building .pkg (ARM only)..."
-
-jpackage \
-  --type pkg \
-  "${COMMON_ARGS[@]}" \
-  --dest "$OUT_DIR"
+echo "[2/2] Building .pkg..."
+jpackage --type pkg "${COMMON_ARGS[@]}" --dest "$OUT_DIR"
 [ $? -ne 0 ] && echo "[WARN] .pkg build failed — .dmg is still available."
 
 rm -rf "$BUILD_DIR"
