@@ -149,7 +149,7 @@ jobs:
           path: target/setup/*.deb
           retention-days: 30
 
-  # ── macOS .dmg (x64 and ARM64) ───────────────────────────────────────
+    # ── macOS .dmg (x64 and ARM64) ───────────────────────────────────────
   build-mac:
     runs-on: macos-latest
     steps:
@@ -185,6 +185,7 @@ jobs:
           name: ActivePulse-macOS-x64-1.0.0
           path: target/setup/ActivePulse-x64-1.0.0.dmg
           retention-days: 30
+        if: success() && steps.build-mac.outputs.x64-dmg-exists == 'true'
 
       - name: Upload macOS ARM64 installer
         uses: actions/upload-artifact@v4
@@ -192,3 +193,4 @@ jobs:
           name: ActivePulse-macOS-ARM64-1.0.0
           path: target/setup/ActivePulse-ARM64-1.0.0.dmg
           retention-days: 30
+        if: success() && steps.build-mac.outputs.arm64-dmg-exists == 'true'

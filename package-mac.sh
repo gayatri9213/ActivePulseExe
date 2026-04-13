@@ -6,6 +6,8 @@
 #  chmod +x package-mac.sh && ./package-mac.sh
 # ─────────────────────────────────────────────────────────────────────
 
+set -e  # Exit on error
+
 APP_NAME="ActivePulse"
 APP_VERSION="1.0.0"
 MAIN_CLASS="com.activepulse.agent.ActivePulseApplication"
@@ -71,8 +73,7 @@ jpackage --type dmg --name "$APP_NAME-x64" --dest "$OUT_DIR" \
          --mac-package-identifier "$BUNDLE_ID.x64" \
          --mac-package-name "$APP_NAME-x64" \
          "${COMMON_ARGS[@]}"
-[ $? -ne 0 ] && echo "[ERROR] x64 .dmg build failed." && exit 1
-echo "[OK] x64 .dmg created."
+echo "[OK] x64 .dmg created: $OUT_DIR/$APP_NAME-x64-$APP_VERSION.dmg"
 
 # ── Build ARM64 .dmg ─────────────────────────────────────────────────
 echo "[2/2] Building ARM64 .dmg..."
@@ -81,8 +82,7 @@ jpackage --type dmg --name "$APP_NAME-ARM64" --dest "$OUT_DIR" \
          --mac-package-identifier "$BUNDLE_ID.arm64" \
          --mac-package-name "$APP_NAME-ARM64" \
          "${COMMON_ARGS[@]}"
-[ $? -ne 0 ] && echo "[ERROR] ARM64 .dmg build failed." && exit 1
-echo "[OK] ARM64 .dmg created."
+echo "[OK] ARM64 .dmg created: $OUT_DIR/$APP_NAME-ARM64-$APP_VERSION.dmg"
 
 rm -rf "$BUILD_DIR"
 
@@ -92,9 +92,6 @@ echo "║  Done!                                           ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
 ls -lh "$OUT_DIR/"
-echo ""
-echo "  ActivePulse-x64-$APP_VERSION.dmg   — for Intel Macs"
-echo "  ActivePulse-ARM64-$APP_VERSION.dmg — for Apple Silicon Macs"
 
 ##!/bin/bash
 
