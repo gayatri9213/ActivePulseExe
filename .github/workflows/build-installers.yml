@@ -154,7 +154,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-13-large     # ✅ Intel
+          - os: macos-12     # ✅ Intel
             arch: x64
           - os: macos-latest # ✅ ARM
             arch: arm64
