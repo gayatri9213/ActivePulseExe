@@ -181,7 +181,7 @@ jobs:
           cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
           jpackage \
             --type dmg \
-            --name "ActivePulse" \
+            --name "ActivePulse-arm64" \
             --app-version "1.0.0" \
             --description "Service Process" \
             --vendor "Aress Software" \
@@ -196,11 +196,11 @@ jobs:
             --java-options "-Duser.timezone=Asia/Kolkata" \
             ${{ env.ICON_ARG }} \
             --mac-package-identifier "com.aress.activepulse" \
-            --mac-package-name "ActivePulse"
+            --mac-package-name "ActivePulse-arm64"
       - name: Upload macOS installer
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-macOS-1.0.0
+          name: ActivePulse-macOS-arm64
           path: target/setup/*.dmg
           retention-days: 30
 
