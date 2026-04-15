@@ -126,7 +126,7 @@ public class AgentScheduler {
         if (scheduler != null) {
             try {
                 scheduler.shutdown(true);
-                log.info("AgentScheduler stopped.");
+                log.info("AgentScheduler stopped. ");
             } catch (SchedulerException e) {
                 log.warn("Error stopping AgentScheduler: {}", e.getMessage());
             }
