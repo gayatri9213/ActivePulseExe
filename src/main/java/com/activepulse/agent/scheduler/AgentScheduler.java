@@ -25,7 +25,7 @@ import static org.quartz.CronScheduleBuilder.cronSchedule;
  * │ InputFlushJob        │ 60 seconds  │ activity_logs              │
  * │ SystemMetricsJob     │ 60 seconds  │ system_metrics             │
  * │ ScreenshotJob        │  5 minutes  │ screenshots + disk         │
- * │ SyncJob              │  5 minutes  │ sync/sent/*.json           │
+ * │ SyncJob              │  10 minutes │ sync/sent/*.json           │
  * │ EndOfDaySyncJob      │ 23:55 daily │ end-of-day data sync       │
  * └──────────────────────┴─────────────┴────────────────────────────┘
  */

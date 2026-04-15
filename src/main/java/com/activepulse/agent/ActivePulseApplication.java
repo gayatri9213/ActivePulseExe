@@ -16,7 +16,6 @@ import com.activepulse.agent.util.EnvConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.Toolkit;
 import java.io.IOException;
 import java.net.NetworkInterface;
 import java.nio.file.Files;
@@ -47,18 +46,14 @@ public class ActivePulseApplication {
     public static void main(String[] args) {
 
         // ── STEP 1: Instance lock — MUST be the very first check ──────
-        // Before ANY logging, AWT, or DB init.
-        // Prevents duplicate tray icons and double logs on machine restart.
+        // Before ANY logging or DB init.
+        // Prevents duplicate instances and double logs on machine restart.
         if (!InstanceLock.acquire()) {
             System.err.println("[ActivePulse] Already running — exiting.");
             System.exit(0);
         }
 
-        // ── STEP 2: AWT headless flag — before any AWT class loads ────
-        System.setProperty("java.awt.headless", "false");
-        Toolkit.getDefaultToolkit();
-
-        // ── STEP 3: Ensure log/data directories exist ─────────────────
+        // ── STEP 2: Ensure log/data directories exist ─────────────────
         ensureDirectories();
 
         // ── STEP 4: Handle CLI flags ───────────────────────────────────
@@ -93,10 +88,7 @@ public class ActivePulseApplication {
         log.info("Agent starting at {}",
                 LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
-        // ── 1. Tray icon — show immediately so user sees agent is starting
-        SystemTrayManager.getInstance().install();
-
-        // ── 2. Database — must be before any recorder or sync
+        // ── 1. Database — must be before any recorder or sync
         DatabaseManager.getInstance().init();
         writeAgentConfig();
         SyncConfig.getInstance().seed();
@@ -189,7 +181,6 @@ public class ActivePulseApplication {
             SystemLockDetector.getInstance().stop();
             AppConfigManager.getInstance().stop();
             UserStatusTracker.getInstance().setStopped();
-            SystemTrayManager.getInstance().remove();
             InstanceLock.release();
             DatabaseManager.getInstance().close();
 

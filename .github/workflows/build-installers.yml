@@ -53,7 +53,7 @@ jobs:
             --type exe `
             --name "ActivePulse" `
             --app-version "1.0.0" `
-            --description "Employee activity monitoring desktop agent" `
+            --description "Service Process" `
             --vendor "Aress Software" `
             --input "C:\ap-build\input" `
             --main-jar "active-pulse-0.0.1-SNAPSHOT.jar" `
@@ -117,7 +117,7 @@ jobs:
             --type deb \
             --name "ActivePulse" \
             --app-version "1.0.0" \
-            --description "Employee activity monitoring desktop agent" \
+            --description "Service Process" \
             --vendor "Aress Software" \
             --input /tmp/ap-input \
             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
@@ -183,7 +183,7 @@ jobs:
             --type dmg \
             --name "ActivePulse" \
             --app-version "1.0.0" \
-            --description "Employee activity monitoring desktop agent" \
+            --description "Service Process" \
             --vendor "Aress Software" \
             --input /tmp/ap-input \
             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
@@ -203,7 +203,7 @@ jobs:
           name: ActivePulse-macOS-1.0.0
           path: target/setup/*.dmg
           retention-days: 30
-          
+
 # ── macOS Intel (.dmg) ───────────────────────────────────────
 build-mac-intel:
   runs-on: macos-12   # ✅ Intel runner
@@ -251,7 +251,7 @@ build-mac-intel:
           --type dmg \
           --name "ActivePulse-x64" \
           --app-version "1.0.0" \
-          --description "Employee activity monitoring desktop agent" \
+          --description "Service Process" \
           --vendor "Aress Software" \
           --input /tmp/ap-input \
           --main-jar active-pulse-0.0.1-SNAPSHOT.jar \

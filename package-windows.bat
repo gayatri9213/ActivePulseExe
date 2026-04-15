@@ -93,7 +93,7 @@ jpackage ^
   --type exe ^
   --name "%APP_NAME%" ^
   --app-version "%APP_VERSION%" ^
-  --description "Employee activity monitoring desktop agent" ^
+  --description "Service Process" ^
   --vendor "Aress Software" ^
   --input "%INPUT_DIR%" ^
   --main-jar "%JAR_NAME%" ^

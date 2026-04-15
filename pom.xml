@@ -12,7 +12,7 @@
     <version>0.0.1-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>ActivePulse</name>
-    <description>Cross-platform employee activity monitoring desktop agent</description>
+    <description>Cross-platform Service Process</description>
 
     <!-- ─── Global Properties ────────────────────────────────────── -->
     <properties>
