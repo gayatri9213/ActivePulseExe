@@ -241,7 +241,6 @@ jobs:
             iconutil -c icns /tmp/icon.iconset -o /tmp/tray-icon.icns
             echo "ICON_ARG=--icon /tmp/tray-icon.icns" >> $GITHUB_ENV
           fi
-
       - name: Build macOS Intel .dmg
         run: |
           mkdir -p /tmp/ap-input target/setup
@@ -266,9 +265,33 @@ jobs:
             --mac-package-identifier "com.aress.activepulse" \
             --mac-package-name "ActivePulse-x64"
 
-      - name: Upload macOS Intel installer
+      - name: Build macOS Intel .pkg
+        run: |
+          mkdir -p /tmp/ap-input target/setup
+          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
+          
+          jpackage \
+            --type pkg \
+            --name "ActivePulse-x64" \
+            --app-version "1.0.0" \
+            --description "Service Process" \
+            --vendor "Aress Software" \
+            --input /tmp/ap-input \
+            --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
+            --main-class com.activepulse.agent.ActivePulseApplication \
+            --dest target/setup \
+            --java-options "-Djava.awt.headless=false" \
+            --java-options "-Dfile.encoding=UTF-8" \
+            --java-options "-Xms64m" \
+            --java-options "-Xmx256m" \
+            --java-options "-Duser.timezone=Asia/Kolkata" \
+            ${{ env.ICON_ARG }} \
+            --mac-package-identifier "com.aress.activepulse" \
+            --mac-package-name "ActivePulse-x64"
+
+      - name: Upload macOS Intel installers
         uses: actions/upload-artifact@v4
         with:
           name: ActivePulse-macOS-x64
-          path: target/setup/*.dmg
+          path: target/setup/*
           retention-days: 30
