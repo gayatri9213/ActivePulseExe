@@ -13,6 +13,7 @@ import com.activepulse.agent.scheduler.AgentScheduler;
 import com.activepulse.agent.sync.SyncConfig;
 import com.activepulse.agent.sync.SyncManager;
 import com.activepulse.agent.util.EnvConfig;
+import com.activepulse.agent.util.WindowsUserDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -138,13 +139,17 @@ public class ActivePulseApplication {
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT OR REPLACE INTO agent_config (key, value) VALUES (?, ?)")) {
 
+                // Try to detect the current Windows user first, fallback to Java property
+                String detectedUser = WindowsUserDetector.getCurrentUser();
+                String userName = detectedUser != null ? detectedUser : System.getProperty("user.name");
+                
                 String[][] config = {
                         {"deviceId",     "DEV-" + getMacAddress()},
                         {"osName",       System.getProperty("os.name")},
                         {"osVersion",    System.getProperty("os.version")},
                         {"osArch",       System.getProperty("os.arch")},
                         {"javaVersion",  System.getProperty("java.version")},
-                        {"userName",     System.getProperty("user.name")},
+                        {"userName",     userName},
                         {"agentVersion", EnvConfig.get("AGENT_VERSION", "1.0.0")},
                         {"startedAt",    Instant.now().toString()},
                         {"sessionStart", Instant.now().toString()},
@@ -155,7 +160,7 @@ public class ActivePulseApplication {
                     ps.executeUpdate();
                 }
                 log.info("Agent config written — device: DEV-{} user: {}",
-                        getMacAddress(), System.getProperty("user.name"));
+                        getMacAddress(), userName);
             }
         } catch (SQLException e) {
             log.error("Failed to write agent config", e);

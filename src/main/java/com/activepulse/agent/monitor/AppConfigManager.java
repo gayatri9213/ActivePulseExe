@@ -2,6 +2,7 @@ package com.activepulse.agent.monitor;
 
 import com.activepulse.agent.db.DatabaseManager;
 import com.activepulse.agent.util.TimeUtil;
+import com.activepulse.agent.util.WindowsUserDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,7 +63,9 @@ public class AppConfigManager {
     // ─────────────────────────────────────────────────────────────────
 
     public void start() {
-        username = readConfig("userName",  System.getProperty("user.name"));
+        // Try to detect the current Windows user first, fallback to Java property
+        String detectedUser = WindowsUserDetector.getCurrentUser();
+        username = readConfig("userName",  detectedUser != null ? detectedUser : System.getProperty("user.name"));
         deviceid = readConfig("deviceId",  "DEV-UNKNOWN");
 
         String logintime = TimeUtil.nowIST();
