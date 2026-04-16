@@ -34,12 +34,16 @@ public class WindowsUserDetector {
      * @return The current Windows user name, or null if detection fails
      */
     public static String getCurrentUser() {
+        log.info("Starting Windows user detection...");
+        
         // Try WMI query first - most reliable for detecting active console user
         try {
             String wmiUser = getCurrentUserViaWMI();
-            if (wmiUser != null && !wmiUser.trim().isEmpty()) {
-                log.debug("Detected user via WMI: {}", wmiUser);
+            if (wmiUser != null && !wmiUser.trim().isEmpty() && !wmiUser.equals("console")) {
+                log.info("Detected user via WMI: {}", wmiUser);
                 return wmiUser;
+            } else {
+                log.debug("WMI returned null, empty, or 'console': {}", wmiUser);
             }
         } catch (Exception e) {
             log.debug("WMI query failed: {}", e.getMessage());
@@ -48,9 +52,11 @@ public class WindowsUserDetector {
         // Try query user sessions
         try {
             String sessionUser = getCurrentUserViaQueryUser();
-            if (sessionUser != null && !sessionUser.trim().isEmpty()) {
-                log.debug("Detected user via query user: {}", sessionUser);
+            if (sessionUser != null && !sessionUser.trim().isEmpty() && !sessionUser.equals("console")) {
+                log.info("Detected user via query user: {}", sessionUser);
                 return sessionUser;
+            } else {
+                log.debug("Query user returned null, empty, or 'console': {}", sessionUser);
             }
         } catch (Exception e) {
             log.debug("Query user failed: {}", e.getMessage());
@@ -59,15 +65,30 @@ public class WindowsUserDetector {
         // Try environment variables as fallback
         try {
             String envUser = getCurrentUserViaEnvironment();
-            if (envUser != null && !envUser.trim().isEmpty()) {
-                log.debug("Detected user via environment: {}", envUser);
+            if (envUser != null && !envUser.trim().isEmpty() && !envUser.equals("console")) {
+                log.info("Detected user via environment: {}", envUser);
                 return envUser;
+            } else {
+                log.debug("Environment variables returned null, empty, or 'console': {}", envUser);
             }
         } catch (Exception e) {
             log.debug("Environment variables failed: {}", e.getMessage());
         }
         
-        log.warn("Failed to detect current Windows user");
+        // Try additional Windows-specific methods
+        try {
+            String whoamiUser = getCurrentUserViaWhoami();
+            if (whoamiUser != null && !whoamiUser.trim().isEmpty() && !whoamiUser.equals("console")) {
+                log.info("Detected user via whoami: {}", whoamiUser);
+                return whoamiUser;
+            } else {
+                log.debug("Whoami returned null, empty, or 'console': {}", whoamiUser);
+            }
+        } catch (Exception e) {
+            log.debug("Whoami failed: {}", e.getMessage());
+        }
+        
+        log.warn("Failed to detect current Windows user - all methods failed");
         return null;
     }
     
@@ -394,6 +415,36 @@ public class WindowsUserDetector {
             }
         } catch (Exception e) {
             log.debug("WMI domain query failed: {}", e.getMessage());
+        }
+        
+        return null;
+    }
+    
+    private static String getCurrentUserViaWhoami() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("whoami");
+            Process process = pb.start();
+            
+            StringBuilder output = new StringBuilder();
+            try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+            
+            process.waitFor();
+            
+            String result = output.toString().trim();
+            if (!result.isEmpty()) {
+                // Remove domain if present (format: DOMAIN\\username)
+                if (result.contains("\\")) {
+                    return result.substring(result.lastIndexOf("\\") + 1);
+                }
+                return result;
+            }
+        } catch (Exception e) {
+            log.debug("Whoami command failed: {}", e.getMessage());
         }
         
         return null;

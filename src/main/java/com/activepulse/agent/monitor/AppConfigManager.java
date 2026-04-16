@@ -65,8 +65,21 @@ public class AppConfigManager {
     public void start() {
         // Try to detect the current Windows user first, fallback to Java property
         String detectedUser = WindowsUserDetector.getCurrentUser();
-        username = readConfig("userName",  detectedUser != null ? detectedUser : System.getProperty("user.name"));
+        String fallbackUser = System.getProperty("user.name");
+        
+        // Avoid using "console" as a username - it's not a real user
+        if (detectedUser == null || detectedUser.equals("console")) {
+            detectedUser = null;
+        }
+        if (fallbackUser != null && fallbackUser.equals("console")) {
+            fallbackUser = null;
+        }
+        
+        username = readConfig("userName",  detectedUser != null ? detectedUser : fallbackUser);
         deviceid = readConfig("deviceId",  "DEV-UNKNOWN");
+        
+        // Update existing database records that have "console" as username
+        updateConsoleUsernamesInDatabase();
 
         String logintime = TimeUtil.nowIST();
         String currentDate = extractDate(logintime);
@@ -446,13 +459,75 @@ public class AppConfigManager {
     //  Getters (for sync payload)
     // ─────────────────────────────────────────────────────────────────
 
-    public String getUsername() { return username; }
+    public String getUsername() { 
+        // Always get current user dynamically to avoid "console" fallback
+        String currentUser = WindowsUserDetector.getCurrentUser();
+        if (currentUser != null && !currentUser.equals("console")) {
+            return currentUser;
+        }
+        // Fallback to cached username if dynamic detection fails
+        return username; 
+    }
     public String getDeviceid() { return deviceid; }
 
     // ─────────────────────────────────────────────────────────────────
     //  Helper
     // ─────────────────────────────────────────────────────────────────
 
+    private void updateConsoleUsernamesInDatabase() {
+        String currentUser = WindowsUserDetector.getCurrentUser();
+        if (currentUser == null || currentUser.equals("console")) {
+            return; // No valid user to update to
+        }
+        
+        try {
+            Connection conn = DatabaseManager.getInstance().getConnection();
+            
+            // Update keyboard_mouse_strokes table
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE keyboard_mouse_strokes SET username = ? WHERE username = 'console'")) {
+                ps.setString(1, currentUser);
+                int strokesUpdated = ps.executeUpdate();
+                if (strokesUpdated > 0) {
+                    log.info("Updated {} keyboard_mouse_strokes records from 'console' to '{}'", strokesUpdated, currentUser);
+                }
+            }
+            
+            // Update activity_log table
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE activity_log SET username = ? WHERE username = 'console'")) {
+                ps.setString(1, currentUser);
+                int activityUpdated = ps.executeUpdate();
+                if (activityUpdated > 0) {
+                    log.info("Updated {} activity_log records from 'console' to '{}'", activityUpdated, currentUser);
+                }
+            }
+            
+            // Update app_config table
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE app_config SET username = ? WHERE username = 'console'")) {
+                ps.setString(1, currentUser);
+                int configUpdated = ps.executeUpdate();
+                if (configUpdated > 0) {
+                    log.info("Updated {} app_config records from 'console' to '{}'", configUpdated, currentUser);
+                }
+            }
+            
+            // Update agent_config table
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE agent_config SET value = ? WHERE key = 'userName' AND value = 'console'")) {
+                ps.setString(1, currentUser);
+                int agentConfigUpdated = ps.executeUpdate();
+                if (agentConfigUpdated > 0) {
+                    log.info("Updated {} agent_config records from 'console' to '{}'", agentConfigUpdated, currentUser);
+                }
+            }
+            
+        } catch (SQLException e) {
+            log.error("Failed to update console usernames in database: {}", e.getMessage());
+        }
+    }
+    
     private String readConfig(String key, String fallback) {
         try {
             Connection conn = DatabaseManager.getInstance().getConnection();

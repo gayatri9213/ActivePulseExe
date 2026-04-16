@@ -1,297 +1,442 @@
-
 name: Build Installers
 
 on:
   push:
-    branches: [ main, dev ]   # triggers on both branches
-  workflow_dispatch:            # also trigger manually from GitHub UI
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
 
-  # ── Windows .exe ─────────────────────────────────────────────────────
+  # 🪟 WINDOWS BUILD
   build-windows:
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21.0.10
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'oracle'        # Oracle JDK to match your local 21.0.10
+          distribution: 'temurin'
 
-      - name: Set up Maven 3.9.13
-        uses: stCarolas/setup-maven@v5
-        with:
-          maven-version: 3.9.13
-
-      - name: Verify versions
-        run: |
-          java --version
-          mvn --version
-      - name: Install WiX Toolset
-        run: |
-          choco install wixtoolset -y
-          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
       - name: Build JAR
-        run: mvn clean package -q
+        run: mvn clean package
 
-      - name: Build Windows .exe installer
+      - name: Create EXE
         run: |
-          $env:TEMP = "C:\ap-tmp"
-          $env:TMP  = "C:\ap-tmp"
-          New-Item -ItemType Directory -Force -Path "C:\ap-tmp"          | Out-Null
-          New-Item -ItemType Directory -Force -Path "C:\ap-build\input"  | Out-Null
-          New-Item -ItemType Directory -Force -Path "target\setup"       | Out-Null
-          Copy-Item "target\active-pulse-0.0.1-SNAPSHOT.jar" "C:\ap-build\input\"
-          $iconArg = @()
-          if (Test-Path "src\main\resources\tray-icon.ico") {
-            Copy-Item "src\main\resources\tray-icon.ico" "C:\ap-build\"
-            $iconArg = @("--icon", "C:\ap-build\tray-icon.ico")
-          }
-          & jpackage `
-            --type exe `
-            --name "ActivePulse" `
-            --app-version "1.0.0" `
-            --description "Service Process" `
-            --vendor "Aress Software" `
-            --input "C:\ap-build\input" `
-            --main-jar "active-pulse-0.0.1-SNAPSHOT.jar" `
-            --main-class "com.activepulse.agent.ActivePulseApplication" `
-            --dest "target\setup" `
-            --temp "C:\ap-build\jpackage-tmp" `
-            --java-options "-Djava.awt.headless=false" `
-            --java-options "-Dfile.encoding=UTF-8" `
-            --java-options "-Xms64m" `
-            --java-options "-Xmx256m" `
-            --java-options "-Duser.timezone=Asia/Kolkata" `
-            @iconArg `
-            --win-dir-chooser `
-            --win-menu `
-            --win-menu-group "ActivePulse" `
-            --win-shortcut `
-            --win-shortcut-prompt `
-            --win-per-user-install `
-            --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-      - name: Upload Windows installer
+          jpackage ^
+            --name ActivePulse ^
+            --input target ^
+            --main-jar your-app.jar ^
+            --type exe ^
+            --dest dist ^
+            --win-console
+
+      - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-Windows-1.0.0
-          path: target/setup/ActivePulse-1.0.0.exe
-          retention-days: 30
+          name: windows-exe
+          path: dist/*
 
-  # ── Linux .deb ───────────────────────────────────────────────────────
+
+  # 🐧 LINUX BUILD (FIXED DEPENDENCIES)
   build-linux:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21.0.10
+      - name: Install required tools
+        run: |
+          sudo apt update
+          sudo apt install -y fakeroot dpkg-dev
+
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'oracle'
+          distribution: 'temurin'
 
-      - name: Set up Maven 3.9.13
-        uses: stCarolas/setup-maven@v5
-        with:
-          maven-version: 3.9.13
-
-      - name: Verify versions
-        run: |
-          java --version
-          mvn --version
       - name: Build JAR
-        run: mvn clean package -q
+        run: mvn clean package
 
-      - name: Build Linux .deb installer
+      - name: Create DEB (with dependencies)
         run: |
-          mkdir -p /tmp/ap-input target/setup
-          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
-          ICON_ARG=""
-          if [ -f "src/main/resources/tray-icon.png" ]; then
-            cp src/main/resources/tray-icon.png /tmp/ap-input/
-            ICON_ARG="--icon /tmp/ap-input/tray-icon.png"
-          fi
           jpackage \
+            --name ActivePulse \
+            --input target \
+            --main-jar your-app.jar \
             --type deb \
-            --name "ActivePulse" \
-            --app-version "1.0.0" \
-            --description "Service Process" \
-            --vendor "Aress Software" \
-            --input /tmp/ap-input \
-            --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
-            --main-class com.activepulse.agent.ActivePulseApplication \
-            --dest target/setup \
-            --java-options "-Djava.awt.headless=false" \
-            --java-options "-Dfile.encoding=UTF-8" \
-            --java-options "-Xms64m" \
-            --java-options "-Xmx256m" \
-            --java-options "-Duser.timezone=Asia/Kolkata" \
-            $ICON_ARG \
-            --linux-shortcut \
-            --linux-menu-group "Office" \
-            --linux-app-category "utility" \
-            --linux-deb-maintainer "support@aressindia.net"
-      - name: Upload Linux installer
+            --dest dist \
+            --linux-deb-depends "libasound2, libpng16-16"
+
+      - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-Linux-1.0.0
-          path: target/setup/*.deb
-          retention-days: 30
+          name: linux-deb
+          path: dist/*
 
-  # ── macOS .dmg ───────────────────────────────────────────────────────
-  build-mac:
+
+  # 🍎 macOS ARM (M1/M2/M3)
+  build-mac-arm:
     runs-on: macos-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21.0.10
+      - name: Set up JDK 21 (ARM)
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'oracle'
+          distribution: 'temurin'
+          architecture: aarch64
 
-      - name: Set up Maven 3.9.13
-        uses: stCarolas/setup-maven@v5
-        with:
-          maven-version: 3.9.13
-
-      - name: Verify versions
-        run: |
-          java --version
-          mvn --version
       - name: Build JAR
-        run: mvn clean package -q
+        run: mvn clean package
 
-      - name: Convert PNG to ICNS
+      - name: Create DMG (ARM)
         run: |
-          if [ -f "src/main/resources/tray-icon.png" ]; then
-            mkdir -p /tmp/icon.iconset
-            for size in 16 32 64 128 256 512; do
-              sips -z $size $size src/main/resources/tray-icon.png \
-                   --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null
-            done
-            iconutil -c icns /tmp/icon.iconset -o /tmp/tray-icon.icns
-            echo "ICON_ARG=--icon /tmp/tray-icon.icns" >> $GITHUB_ENV
-          fi
-      - name: Build macOS .dmg
-        run: |
-          mkdir -p /tmp/ap-input target/setup
-          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
           jpackage \
+            --name ActivePulse-arm64 \
+            --input target \
+            --main-jar your-app.jar \
             --type dmg \
-            --name "ActivePulse-arm64" \
-            --app-version "1.0.0" \
-            --description "Service Process" \
-            --vendor "Aress Software" \
-            --input /tmp/ap-input \
-            --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
-            --main-class com.activepulse.agent.ActivePulseApplication \
-            --dest target/setup \
-            --java-options "-Djava.awt.headless=false" \
-            --java-options "-Dfile.encoding=UTF-8" \
-            --java-options "-Xms64m" \
-            --java-options "-Xmx256m" \
-            --java-options "-Duser.timezone=Asia/Kolkata" \
-            ${{ env.ICON_ARG }} \
-            --mac-package-identifier "com.aress.activepulse" \
-            --mac-package-name "ActivePulse-arm64"
-      - name: Upload macOS installer
+            --dest dist
+
+      - name: Upload macOS ARM Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-macOS-arm64
-          path: target/setup/*.dmg
-          retention-days: 30
+          name: mac-arm64
+          path: dist/*
 
-  # ── macOS Intel (.dmg) ───────────────────────────────────────
+
+  # 🍎 macOS INTEL (FIXED ISSUE)
   build-mac-intel:
-    runs-on: macos-12   # ✅ Intel runner
+    runs-on: macos-15-intel   # Intel runner
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21.0.10
+      - name: Set up JDK 21 (x64)
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'oracle'
-
-      - name: Set up Maven 3.9.13
-        uses: stCarolas/setup-maven@v5
-        with:
-          maven-version: 3.9.13
-
-      - name: Verify versions
-        run: |
-          java --version
-          mvn --version
+          distribution: 'temurin'
+          architecture: x64
 
       - name: Build JAR
-        run: mvn clean package -q
+        run: mvn clean package
 
-      - name: Convert PNG to ICNS
+      - name: Create DMG (Intel)
         run: |
-          if [ -f "src/main/resources/tray-icon.png" ]; then
-            mkdir -p /tmp/icon.iconset
-            for size in 16 32 64 128 256 512; do
-              sips -z $size $size src/main/resources/tray-icon.png \
-                   --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null
-            done
-            iconutil -c icns /tmp/icon.iconset -o /tmp/tray-icon.icns
-            echo "ICON_ARG=--icon /tmp/tray-icon.icns" >> $GITHUB_ENV
-          fi
-      - name: Build macOS Intel .dmg
-        run: |
-          mkdir -p /tmp/ap-input target/setup
-          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
-          
           jpackage \
+            --name ActivePulse-x64 \
+            --input target \
+            --main-jar your-app.jar \
             --type dmg \
-            --name "ActivePulse-x64" \
-            --app-version "1.0.0" \
-            --description "Service Process" \
-            --vendor "Aress Software" \
-            --input /tmp/ap-input \
-            --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
-            --main-class com.activepulse.agent.ActivePulseApplication \
-            --dest target/setup \
-            --java-options "-Djava.awt.headless=false" \
-            --java-options "-Dfile.encoding=UTF-8" \
-            --java-options "-Xms64m" \
-            --java-options "-Xmx256m" \
-            --java-options "-Duser.timezone=Asia/Kolkata" \
-            ${{ env.ICON_ARG }} \
-            --mac-package-identifier "com.aress.activepulse" \
-            --mac-package-name "ActivePulse-x64"
+            --dest dist
 
-      - name: Build macOS Intel .pkg
-        run: |
-          mkdir -p /tmp/ap-input target/setup
-          cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
-          
-          jpackage \
-            --type pkg \
-            --name "ActivePulse-x64" \
-            --app-version "1.0.0" \
-            --description "Service Process" \
-            --vendor "Aress Software" \
-            --input /tmp/ap-input \
-            --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
-            --main-class com.activepulse.agent.ActivePulseApplication \
-            --dest target/setup \
-            --java-options "-Djava.awt.headless=false" \
-            --java-options "-Dfile.encoding=UTF-8" \
-            --java-options "-Xms64m" \
-            --java-options "-Xmx256m" \
-            --java-options "-Duser.timezone=Asia/Kolkata" \
-            ${{ env.ICON_ARG }} \
-            --mac-package-identifier "com.aress.activepulse" \
-            --mac-package-name "ActivePulse-x64"
-
-      - name: Upload macOS Intel installers
+      - name: Upload macOS Intel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ActivePulse-macOS-x64
-          path: target/setup/*
-          retention-days: 30
+          name: mac-x64
+          path: dist/*
+
+
+# name: Build Installers
+
+# on:
+#   push:
+#     branches: [ main, dev ]   # triggers on both branches
+#   workflow_dispatch:            # also trigger manually from GitHub UI
+
+# jobs:
+
+#   # ── Windows .exe ─────────────────────────────────────────────────────
+#   build-windows:
+#     runs-on: windows-latest
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Set up JDK 21.0.10
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: '21'
+#           distribution: 'oracle'        # Oracle JDK to match your local 21.0.10
+
+#       - name: Set up Maven 3.9.13
+#         uses: stCarolas/setup-maven@v5
+#         with:
+#           maven-version: 3.9.13
+
+#       - name: Verify versions
+#         run: |
+#           java --version
+#           mvn --version
+#       - name: Install WiX Toolset
+#         run: |
+#           choco install wixtoolset -y
+#           echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
+#       - name: Build JAR
+#         run: mvn clean package -q
+
+#       - name: Build Windows .exe installer
+#         run: |
+#           $env:TEMP = "C:\ap-tmp"
+#           $env:TMP  = "C:\ap-tmp"
+#           New-Item -ItemType Directory -Force -Path "C:\ap-tmp"          | Out-Null
+#           New-Item -ItemType Directory -Force -Path "C:\ap-build\input"  | Out-Null
+#           New-Item -ItemType Directory -Force -Path "target\setup"       | Out-Null
+#           Copy-Item "target\active-pulse-0.0.1-SNAPSHOT.jar" "C:\ap-build\input\"
+#           $iconArg = @()
+#           if (Test-Path "src\main\resources\tray-icon.ico") {
+#             Copy-Item "src\main\resources\tray-icon.ico" "C:\ap-build\"
+#             $iconArg = @("--icon", "C:\ap-build\tray-icon.ico")
+#           }
+#           & jpackage `
+#             --type exe `
+#             --name "ActivePulse" `
+#             --app-version "1.0.0" `
+#             --description "Service Process" `
+#             --vendor "Aress Software" `
+#             --input "C:\ap-build\input" `
+#             --main-jar "active-pulse-0.0.1-SNAPSHOT.jar" `
+#             --main-class "com.activepulse.agent.ActivePulseApplication" `
+#             --dest "target\setup" `
+#             --temp "C:\ap-build\jpackage-tmp" `
+#             --java-options "-Djava.awt.headless=false" `
+#             --java-options "-Dfile.encoding=UTF-8" `
+#             --java-options "-Xms64m" `
+#             --java-options "-Xmx256m" `
+#             --java-options "-Duser.timezone=Asia/Kolkata" `
+#             @iconArg `
+#             --win-dir-chooser `
+#             --win-menu `
+#             --win-menu-group "ActivePulse" `
+#             --win-shortcut `
+#             --win-shortcut-prompt `
+#             --win-per-user-install `
+#             --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+#       - name: Upload Windows installer
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: ActivePulse-Windows-1.0.0
+#           path: target/setup/ActivePulse-1.0.0.exe
+#           retention-days: 30
+
+#   # ── Linux .deb ───────────────────────────────────────────────────────
+#   build-linux:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Set up JDK 21.0.10
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: '21'
+#           distribution: 'oracle'
+
+#       - name: Set up Maven 3.9.13
+#         uses: stCarolas/setup-maven@v5
+#         with:
+#           maven-version: 3.9.13
+
+#       - name: Verify versions
+#         run: |
+#           java --version
+#           mvn --version
+#       - name: Build JAR
+#         run: mvn clean package -q
+
+#       - name: Build Linux .deb installer
+#         run: |
+#           mkdir -p /tmp/ap-input target/setup
+#           cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
+#           ICON_ARG=""
+#           if [ -f "src/main/resources/tray-icon.png" ]; then
+#             cp src/main/resources/tray-icon.png /tmp/ap-input/
+#             ICON_ARG="--icon /tmp/ap-input/tray-icon.png"
+#           fi
+#           jpackage \
+#             --type deb \
+#             --name "ActivePulse" \
+#             --app-version "1.0.0" \
+#             --description "Service Process" \
+#             --vendor "Aress Software" \
+#             --input /tmp/ap-input \
+#             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
+#             --main-class com.activepulse.agent.ActivePulseApplication \
+#             --dest target/setup \
+#             --java-options "-Djava.awt.headless=false" \
+#             --java-options "-Dfile.encoding=UTF-8" \
+#             --java-options "-Xms64m" \
+#             --java-options "-Xmx256m" \
+#             --java-options "-Duser.timezone=Asia/Kolkata" \
+#             $ICON_ARG \
+#             --linux-shortcut \
+#             --linux-menu-group "Office" \
+#             --linux-app-category "utility" \
+#             --linux-deb-maintainer "support@aressindia.net"
+#       - name: Upload Linux installer
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: ActivePulse-Linux-1.0.0
+#           path: target/setup/*.deb
+#           retention-days: 30
+
+#   # ── macOS .dmg ───────────────────────────────────────────────────────
+#   build-mac:
+#     runs-on: macos-latest
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Set up JDK 21.0.10
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: '21'
+#           distribution: 'oracle'
+
+#       - name: Set up Maven 3.9.13
+#         uses: stCarolas/setup-maven@v5
+#         with:
+#           maven-version: 3.9.13
+
+#       - name: Verify versions
+#         run: |
+#           java --version
+#           mvn --version
+#       - name: Build JAR
+#         run: mvn clean package -q
+
+#       - name: Convert PNG to ICNS
+#         run: |
+#           if [ -f "src/main/resources/tray-icon.png" ]; then
+#             mkdir -p /tmp/icon.iconset
+#             for size in 16 32 64 128 256 512; do
+#               sips -z $size $size src/main/resources/tray-icon.png \
+#                    --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null
+#             done
+#             iconutil -c icns /tmp/icon.iconset -o /tmp/tray-icon.icns
+#             echo "ICON_ARG=--icon /tmp/tray-icon.icns" >> $GITHUB_ENV
+#           fi
+#       - name: Build macOS .dmg
+#         run: |
+#           mkdir -p /tmp/ap-input target/setup
+#           cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
+#           jpackage \
+#             --type dmg \
+#             --name "ActivePulse-arm64" \
+#             --app-version "1.0.0" \
+#             --description "Service Process" \
+#             --vendor "Aress Software" \
+#             --input /tmp/ap-input \
+#             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
+#             --main-class com.activepulse.agent.ActivePulseApplication \
+#             --dest target/setup \
+#             --java-options "-Djava.awt.headless=false" \
+#             --java-options "-Dfile.encoding=UTF-8" \
+#             --java-options "-Xms64m" \
+#             --java-options "-Xmx256m" \
+#             --java-options "-Duser.timezone=Asia/Kolkata" \
+#             ${{ env.ICON_ARG }} \
+#             --mac-package-identifier "com.aress.activepulse" \
+#             --mac-package-name "ActivePulse-arm64"
+#       - name: Upload macOS installer
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: ActivePulse-macOS-arm64
+#           path: target/setup/*.dmg
+#           retention-days: 30
+
+#   # ── macOS Intel (.dmg) ───────────────────────────────────────
+#   build-mac-intel:
+#     runs-on: macos-12   # ✅ Intel runner
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Set up JDK 21.0.10
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: '21'
+#           distribution: 'oracle'
+
+#       - name: Set up Maven 3.9.13
+#         uses: stCarolas/setup-maven@v5
+#         with:
+#           maven-version: 3.9.13
+
+#       - name: Verify versions
+#         run: |
+#           java --version
+#           mvn --version
+
+#       - name: Build JAR
+#         run: mvn clean package -q
+
+#       - name: Convert PNG to ICNS
+#         run: |
+#           if [ -f "src/main/resources/tray-icon.png" ]; then
+#             mkdir -p /tmp/icon.iconset
+#             for size in 16 32 64 128 256 512; do
+#               sips -z $size $size src/main/resources/tray-icon.png \
+#                    --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null
+#             done
+#             iconutil -c icns /tmp/icon.iconset -o /tmp/tray-icon.icns
+#             echo "ICON_ARG=--icon /tmp/tray-icon.icns" >> $GITHUB_ENV
+#           fi
+#       - name: Build macOS Intel .dmg
+#         run: |
+#           mkdir -p /tmp/ap-input target/setup
+#           cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
+          
+#           jpackage \
+#             --type dmg \
+#             --name "ActivePulse-x64" \
+#             --app-version "1.0.0" \
+#             --description "Service Process" \
+#             --vendor "Aress Software" \
+#             --input /tmp/ap-input \
+#             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
+#             --main-class com.activepulse.agent.ActivePulseApplication \
+#             --dest target/setup \
+#             --java-options "-Djava.awt.headless=false" \
+#             --java-options "-Dfile.encoding=UTF-8" \
+#             --java-options "-Xms64m" \
+#             --java-options "-Xmx256m" \
+#             --java-options "-Duser.timezone=Asia/Kolkata" \
+#             ${{ env.ICON_ARG }} \
+#             --mac-package-identifier "com.aress.activepulse" \
+#             --mac-package-name "ActivePulse-x64"
+
+#       - name: Build macOS Intel .pkg
+#         run: |
+#           mkdir -p /tmp/ap-input target/setup
+#           cp target/active-pulse-0.0.1-SNAPSHOT.jar /tmp/ap-input/
+          
+#           jpackage \
+#             --type pkg \
+#             --name "ActivePulse-x64" \
+#             --app-version "1.0.0" \
+#             --description "Service Process" \
+#             --vendor "Aress Software" \
+#             --input /tmp/ap-input \
+#             --main-jar active-pulse-0.0.1-SNAPSHOT.jar \
+#             --main-class com.activepulse.agent.ActivePulseApplication \
+#             --dest target/setup \
+#             --java-options "-Djava.awt.headless=false" \
+#             --java-options "-Dfile.encoding=UTF-8" \
+#             --java-options "-Xms64m" \
+#             --java-options "-Xmx256m" \
+#             --java-options "-Duser.timezone=Asia/Kolkata" \
+#             ${{ env.ICON_ARG }} \
+#             --mac-package-identifier "com.aress.activepulse" \
+#             --mac-package-name "ActivePulse-x64"
+
+#       - name: Upload macOS Intel installers
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: ActivePulse-macOS-x64
+#           path: target/setup/*
+#           retention-days: 30

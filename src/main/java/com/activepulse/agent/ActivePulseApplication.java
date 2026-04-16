@@ -141,7 +141,17 @@ public class ActivePulseApplication {
 
                 // Try to detect the current Windows user first, fallback to Java property
                 String detectedUser = WindowsUserDetector.getCurrentUser();
-                String userName = detectedUser != null ? detectedUser : System.getProperty("user.name");
+                String fallbackUser = System.getProperty("user.name");
+                
+                // Avoid using "console" as a username - it's not a real user
+                if (detectedUser == null || detectedUser.equals("console")) {
+                    detectedUser = null;
+                }
+                if (fallbackUser != null && fallbackUser.equals("console")) {
+                    fallbackUser = null;
+                }
+                
+                String userName = detectedUser != null ? detectedUser : fallbackUser;
                 
                 String[][] config = {
                         {"deviceId",     "DEV-" + getMacAddress()},
