@@ -44,8 +44,6 @@ jobs:
             --win-menu `
             --win-menu-group "ActivePulse" `
             --win-dir-chooser `
-            --win-per-user-install false `
-            --win-install-dir "C:\\Program Files\\ActivePulse" `
             --win-post-install startup.ps1
 
       - uses: actions/upload-artifact@v4
@@ -94,8 +92,6 @@ jobs:
             --icon src/main/resources/tray-icon.png \
             --linux-shortcut \
             --linux-menu-group "Utility" \
-            --resource-dir . \
-            --post-install ./linux-startup.sh
 
       - uses: actions/upload-artifact@v4
         with:
