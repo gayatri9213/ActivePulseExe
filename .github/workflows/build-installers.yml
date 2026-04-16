@@ -23,13 +23,20 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # ✅ FIX: Normalize jar name
+      - name: Prepare JAR
+        shell: bash
+        run: |
+          ls target
+          cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
+
       - name: Create EXE
         shell: pwsh
         run: |
           jpackage `
             --name ActivePulse `
             --input target `
-            --main-jar activepulse-1.0.jar `
+            --main-jar app.jar `
             --type exe `
             --dest dist `
             --win-console
@@ -47,12 +54,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install required tools
         run: |
           sudo apt update
           sudo apt install -y fakeroot dpkg-dev
 
-      - name: Set up JDK
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -61,14 +68,20 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # ✅ FIX
+      - name: Prepare JAR
+        run: |
+          ls target
+          cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
+
       - name: Create DEB
         run: |
           jpackage \
             --name ActivePulse \
             --input target \
-            --main-jar activepulse-1.0.jar \
+            --main-jar app.jar \
             --type deb \
-            --dest dist
+            --dest dist            
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK (ARM)
+      - name: Set up JDK 21 (ARM)
         uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -93,12 +106,18 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # ✅ FIX
+      - name: Prepare JAR
+        run: |
+          ls target
+          cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
+
       - name: Create DMG (ARM)
         run: |
           jpackage \
             --name ActivePulse-arm64 \
             --input target \
-            --main-jar activepulse-1.0.jar \
+            --main-jar app.jar \
             --type dmg \
             --dest dist
 
@@ -115,7 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK (x64)
+      - name: Set up JDK 21 (x64)
         uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -125,12 +144,18 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # ✅ FIX
+      - name: Prepare JAR
+        run: |
+          ls target
+          cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
+
       - name: Create DMG (Intel)
         run: |
           jpackage \
             --name ActivePulse-x64 \
             --input target \
-            --main-jar activepulse-1.0.jar \
+            --main-jar app.jar \
             --type dmg \
             --dest dist
 
