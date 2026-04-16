@@ -106,13 +106,11 @@ jpackage ^
   --java-options "-Xmx256m" ^
   --java-options "-Duser.timezone=Asia/Kolkata" ^
   %ICON_ARG% ^
-  %LICENSE_ARG% ^
   --win-dir-chooser ^
   --win-menu ^
   --win-menu-group "ActivePulse" ^
   --win-shortcut ^
   --win-shortcut-prompt ^
-  --win-per-user-install ^
   --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
 if %ERRORLEVEL% neq 0 (
@@ -135,10 +133,12 @@ echo.
 echo   Installer: target\setup\ActivePulse-%APP_VERSION%.exe
 echo.
 echo   Installs with:
+echo     - Machine-wide installation (all users)
 echo     - Setup wizard + directory chooser
 echo     - Start Menu under 'ActivePulse'
 echo     - Add/Remove Programs entry
 echo     - Bundled JRE (no Java needed on target)
+echo     - Auto-startup for all users
 echo.
 
 set /p OPEN="Open output folder? (y/n): "

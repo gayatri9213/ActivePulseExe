@@ -23,7 +23,6 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
-      # ✅ FIX: Normalize jar name
       - name: Prepare JAR
         shell: bash
         run: |
@@ -39,7 +38,15 @@ jobs:
             --main-jar app.jar `
             --type exe `
             --dest dist `
-            --win-console
+            --icon src/main/resources/tray-icon.ico `
+            --win-console `
+            --win-shortcut `
+            --win-menu `
+            --win-menu-group "ActivePulse" `
+            --win-dir-chooser `
+            --win-per-user-install false `
+            --win-install-dir "C:\\Program Files\\ActivePulse" `
+            --win-post-install startup.ps1
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,11 +75,13 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
-      # ✅ FIX
       - name: Prepare JAR
         run: |
           ls target
           cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
+
+      - name: Make script executable
+        run: chmod +x linux-startup.sh
 
       - name: Create DEB
         run: |
@@ -81,7 +90,12 @@ jobs:
             --input target \
             --main-jar app.jar \
             --type deb \
-            --dest dist            
+            --dest dist \
+            --icon src/main/resources/tray-icon.png \
+            --linux-shortcut \
+            --linux-menu-group "Utility" \
+            --resource-dir . \
+            --post-install ./linux-startup.sh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -106,7 +120,6 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
-      # ✅ FIX
       - name: Prepare JAR
         run: |
           ls target
@@ -144,7 +157,6 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
-      # ✅ FIX
       - name: Prepare JAR
         run: |
           ls target
@@ -163,7 +175,6 @@ jobs:
         with:
           name: mac-x64
           path: dist/*
-
 # name: Build Installers
 
 # on:
