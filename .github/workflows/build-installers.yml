@@ -44,7 +44,6 @@ jobs:
             --win-menu `
             --win-menu-group "ActivePulse" `
             --win-dir-chooser `
-            --win-post-install startup.ps1
 
       - uses: actions/upload-artifact@v4
         with:
