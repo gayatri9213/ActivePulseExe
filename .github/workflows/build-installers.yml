@@ -23,14 +23,21 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # 🔍 Get JAR dynamically
+      - name: Get JAR name
+        id: jar
+        shell: bash
+        run: echo "JAR=$(ls target/*.jar | xargs -n 1 basename)" >> $GITHUB_OUTPUT
+
       - name: Create EXE
+        shell: pwsh
         run: |
-          jpackage ^
-            --name ActivePulse ^
-            --input target ^
-            --main-jar your-app.jar ^
-            --type exe ^
-            --dest dist ^
+          jpackage `
+            --name ActivePulse `
+            --input target `
+            --main-jar ${{ steps.jar.outputs.JAR }} `
+            --type exe `
+            --dest dist `
             --win-console
 
       - name: Upload Windows Artifact
@@ -40,7 +47,7 @@ jobs:
           path: dist/*
 
 
-  # 🐧 LINUX BUILD (FIXED DEPENDENCIES)
+  # 🐧 LINUX BUILD
   build-linux:
     runs-on: ubuntu-latest
 
@@ -61,15 +68,19 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
-      - name: Create DEB (with dependencies)
+      # 🔍 Get JAR dynamically
+      - name: Get JAR name
+        id: jar
+        run: echo "JAR=$(ls target/*.jar | xargs -n 1 basename)" >> $GITHUB_OUTPUT
+
+      - name: Create DEB
         run: |
           jpackage \
             --name ActivePulse \
             --input target \
-            --main-jar your-app.jar \
+            --main-jar ${{ steps.jar.outputs.JAR }} \
             --type deb \
-            --dest dist \
-            --linux-deb-depends "libasound2, libpng16-16"
+            --dest dist
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
@@ -95,12 +106,17 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # 🔍 Get JAR dynamically
+      - name: Get JAR name
+        id: jar
+        run: echo "JAR=$(ls target/*.jar | xargs -n 1 basename)" >> $GITHUB_OUTPUT
+
       - name: Create DMG (ARM)
         run: |
           jpackage \
             --name ActivePulse-arm64 \
             --input target \
-            --main-jar your-app.jar \
+            --main-jar ${{ steps.jar.outputs.JAR }} \
             --type dmg \
             --dest dist
 
@@ -111,9 +127,9 @@ jobs:
           path: dist/*
 
 
-  # 🍎 macOS INTEL (FIXED ISSUE)
+  # 🍎 macOS INTEL (FIXED + MODERN RUNNER)
   build-mac-intel:
-    runs-on: macos-15-intel   # Intel runner
+    runs-on: macos-15-intel
 
     steps:
       - uses: actions/checkout@v4
@@ -128,12 +144,17 @@ jobs:
       - name: Build JAR
         run: mvn clean package
 
+      # 🔍 Get JAR dynamically
+      - name: Get JAR name
+        id: jar
+        run: echo "JAR=$(ls target/*.jar | xargs -n 1 basename)" >> $GITHUB_OUTPUT
+
       - name: Create DMG (Intel)
         run: |
           jpackage \
             --name ActivePulse-x64 \
             --input target \
-            --main-jar your-app.jar \
+            --main-jar ${{ steps.jar.outputs.JAR }} \
             --type dmg \
             --dest dist
 
