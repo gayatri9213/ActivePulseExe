@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           jpackage `
-            --name ActivePulse `
+            --name ServiceProcess `
             --input target `
             --main-jar app.jar `
             --type exe `
@@ -42,7 +42,7 @@ jobs:
             --win-console `
             --win-shortcut `
             --win-menu `
-            --win-menu-group "ActivePulse" `
+            --win-menu-group "ServiceProcess" `
             --win-dir-chooser `
 
       - uses: actions/upload-artifact@v4
@@ -83,7 +83,7 @@ jobs:
       - name: Create DEB
         run: |
           jpackage \
-            --name ActivePulse \
+            --name "ServiceProcess" \
             --input target \
             --main-jar app.jar \
             --type deb \
@@ -123,7 +123,7 @@ jobs:
       - name: Create DMG (ARM)
         run: |
           jpackage \
-            --name ActivePulse-arm64 \
+            --name ServiceProcess-arm64 \
             --input target \
             --main-jar app.jar \
             --type dmg \
@@ -160,7 +160,7 @@ jobs:
       - name: Create DMG (Intel)
         run: |
           jpackage \
-            --name ActivePulse-x64 \
+            --name ServiceProcess-x64 \
             --input target \
             --main-jar app.jar \
             --type dmg \

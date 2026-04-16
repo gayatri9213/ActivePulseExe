@@ -13,7 +13,7 @@ import java.util.Set;
 /**
  * AutoStartManager — registers the agent to start on OS login.
  *
- * Windows → HKCU registry Run key   (no admin required, uses javaw.exe)
+ * Windows → HKLM registry Run key   (admin required for all users, uses javaw.exe)
  * macOS   → LaunchAgent plist
  * Linux   → systemd user service
  *
@@ -35,7 +35,7 @@ public class AutoStartManager {
     private static final String SERVICE_NAME = "activepulse";
 
     private static final String WIN_REG_KEY =
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+            "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile AutoStartManager instance;
@@ -82,7 +82,7 @@ public class AutoStartManager {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Windows — HKCU Registry Run key
+    //  Windows — HKLM Registry Run key
     //  Uses javaw.exe so no console window appears on auto-start
     // ─────────────────────────────────────────────────────────────────
 
