@@ -7,7 +7,6 @@ on:
 
 jobs:
 
-  # 🪟 WINDOWS
   build-windows:
     runs-on: windows-latest
 
@@ -37,33 +36,29 @@ jobs:
         run: |
           cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
 
-      # ✅ FIX: Ensure resources folder + copy wix file
+      # ✅ Prepare WiX resources
       - name: Prepare WiX resources
         shell: pwsh
         run: |
           Write-Host "Preparing WiX resources..."
 
-          # Create resources folder if not exists
           if (!(Test-Path "resources")) {
             New-Item -ItemType Directory -Path "resources"
           }
 
-          # Copy wix file from src → resources
-          Copy-Item "src\main\resources\wix-overrides.wxs" "resources\wix-overrides.wxs" -Force
-
-          # Verify file exists
+          # Ensure wix file exists
           if (!(Test-Path "resources\wix-overrides.wxs")) {
-            Write-Error "❌ wix-overrides.wxs not found"
+            Write-Error "❌ wix-overrides.wxs missing in resources folder"
             exit 1
           }
 
           Write-Host "✅ WiX file ready"
 
       # ✅ Build MSI
-      - name: Create MSI Installer with Auto-Start
+      - name: Create MSI Installer
         shell: pwsh
         run: |
-          Write-Host "🚀 Building MSI with registry auto-start..."
+          Write-Host "🚀 Building MSI..."
 
           jpackage `
             --name ServiceProcess `
@@ -79,7 +74,7 @@ jobs:
             --win-dir-chooser `
             --resource-dir resources
 
-      # ✅ Upload artifact
+      # ✅ Upload
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

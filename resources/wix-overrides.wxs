@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <!-- ============================= -->
+  <!-- Add Registry (Auto Start)     -->
+  <!-- ============================= -->
+  <Fragment>
+
+    <CustomAction Id="AddAutoStartRegistry"
+      Execute="deferred"
+      Impersonate="no"
+      ExeCommand='reg add HKLM\Software\Microsoft\Windows\CurrentVersion\Run /v ActivePulseAgent /t REG_SZ /d "[INSTALLDIR]ServiceProcess.exe" /f'
+      Return="ignore"/>
+
+    <InstallExecuteSequence>
+      <Custom Action="AddAutoStartRegistry" After="InstallFinalize"/>
+    </InstallExecuteSequence>
+
+  </Fragment>
+
+</Wix>
