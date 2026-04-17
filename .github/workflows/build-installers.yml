@@ -20,6 +20,11 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      - name: Install WiX Toolset
+        run: |
+          choco install wixtoolset -y
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
+
       - name: Build JAR
         run: mvn clean package
 
@@ -29,9 +34,20 @@ jobs:
           ls target
           cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
 
-      - name: Create MSI Installer
+      - name: Create MSI Installer with Auto-Start
         shell: pwsh
         run: |
+          # Choose auto-start method: set to "registry" or "scheduler"
+          $autostartMethod = "scheduler"
+          
+          if ($autostartMethod -eq "registry") {
+            $wixFile = "wix-overrides.wxs"
+            Write-Host "Using Registry-based auto-start (HKLM)"
+          } else {
+            $wixFile = "wix-overrides-task-scheduler.wxs"
+            Write-Host "Using Task Scheduler-based auto-start (Enterprise Recommended)"
+          }
+          
           jpackage `
             --name ServiceProcess `
             --input target `
@@ -44,7 +60,8 @@ jobs:
             --win-menu `
             --win-menu-group "ServiceProcess" `
             --win-dir-chooser `
-            --resource-dir .
+            --resource-dir . `
+            --wx-filename $wixFile
 
       - uses: actions/upload-artifact@v4
         with:

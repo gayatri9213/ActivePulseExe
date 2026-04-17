@@ -1,20 +1,57 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
+  <!-- ============================================================ -->
+  <!-- SOLUTION 1: Registry-based Auto-Start (HKLM)                -->
+  <!-- Simple approach - adds to HKLM Run key                       -->
+  <!-- ============================================================ -->
   <Fragment>
     <DirectoryRef Id="INSTALLDIR">
       <Component Id="RegistryAutoStart" Guid="*">
-        
         <RegistryValue
           Root="HKLM"
           Key="Software\Microsoft\Windows\CurrentVersion\Run"
           Name="ActivePulseAgent"
-          Value="&quot;[INSTALLDIR]ActivePulse.exe&quot;"
+          Value="&quot;[INSTALLDIR]ServiceProcess.exe&quot;"
           Type="string"
           KeyPath="yes"/>
-
       </Component>
     </DirectoryRef>
+  </Fragment>
+
+  <!-- ============================================================ -->
+  <!-- SOLUTION 2: Common Startup Folder Shortcut                    -->
+  <!-- Creates shortcut in All Users Startup folder                  -->
+  <!-- Path: C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp -->
+  <!-- Uses standard WiX StartupFolder directory ID                  -->
+  <!-- ============================================================ -->
+  <Fragment>
+    <DirectoryRef Id="StartupFolder">
+      <Component Id="StartupShortcut" Guid="*">
+        <Shortcut
+          Id="ActivePulseStartupShortcut"
+          Name="ActivePulse"
+          Description="ActivePulse Productivity Tracking Agent"
+          Target="[INSTALLDIR]ServiceProcess.exe"
+          WorkingDirectory="INSTALLDIR"/>
+        <RemoveFolder Id="CleanupStartupFolder" On="uninstall"/>
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\ActivePulse"
+          Name="StartupShortcutInstalled"
+          Type="string"
+          Value="1"
+          KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <!-- Add components to the main Feature -->
+  <Fragment>
+    <Feature Id="ProductFeature" Title="Main Feature" Level="1">
+      <ComponentRef Id="RegistryAutoStart"/>
+      <ComponentRef Id="StartupShortcut"/>
+    </Feature>
   </Fragment>
 
 </Wix>
