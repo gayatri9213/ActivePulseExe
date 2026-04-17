@@ -48,6 +48,9 @@ jobs:
             Write-Host "Using Task Scheduler-based auto-start (Enterprise Recommended)"
           }
           
+          # Copy selected WiX file to main.wxs (jpackage expects main.wxs in resource dir)
+          Copy-Item $wixFile main.wxs
+          
           jpackage `
             --name ServiceProcess `
             --input target `
@@ -60,8 +63,10 @@ jobs:
             --win-menu `
             --win-menu-group "ServiceProcess" `
             --win-dir-chooser `
-            --resource-dir . `
-            --wx-filename $wixFile
+            --resource-dir .
+          
+          # Clean up temporary main.wxs
+          Remove-Item main.wxs
 
       - uses: actions/upload-artifact@v4
         with:

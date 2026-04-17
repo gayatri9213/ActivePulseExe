@@ -56,12 +56,21 @@ if "%autostartMethod%"=="1" (
     echo Using Task Scheduler-based auto-start (Enterprise Recommended)
 )
 
+REM Copy selected WiX file to main.wxs (jpackage expects main.wxs in resource dir)
+copy %wixFile% main.wxs
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to copy WiX file!
+    exit /b 1
+)
+
 REM Create output directory
 if not exist "dist" mkdir dist
 
 REM Build MSI with jpackage
 echo.
 echo Building MSI installer with jpackage...
+echo Auto-start method: %autostartMethod%
+echo.
 jpackage ^
     --name ServiceProcess ^
     --input target ^
@@ -74,13 +83,15 @@ jpackage ^
     --win-menu ^
     --win-menu-group "ServiceProcess" ^
     --win-dir-chooser ^
-    --resource-dir . ^
-    --wx-filename %wixFile%
+    --resource-dir .
 
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: jpackage build failed!
     exit /b 1
 )
+
+REM Clean up temporary main.wxs
+del main.wxs
 
 echo.
 echo ============================================================
