@@ -13,7 +13,7 @@ import java.util.Set;
 /**
  * AutoStartManager — registers the agent to start on OS login.
  *
- * Windows → HKLM registry Run key   (admin required for all users, uses javaw.exe)
+ * Windows → HKCU registry Run key   (no admin required, uses javaw.exe)
  * macOS   → LaunchAgent plist
  * Linux   → systemd user service
  *
@@ -35,7 +35,7 @@ public class AutoStartManager {
     private static final String SERVICE_NAME = "activepulse";
 
     private static final String WIN_REG_KEY =
-            "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile AutoStartManager instance;
@@ -58,15 +58,36 @@ public class AutoStartManager {
      * Always re-installs on every startup — ensures JAR path and
      * Java path are always up to date in the registry.
      */
-    public void install() {
-        log.info("Registering auto-start...");
-        log.info("  JAR  : {}", JAR_PATH);
-        log.info("  Java : {}", JAVA_BIN);
-
-        if (isWindows()) installWindows();
-        else if (isMac()) installMac();
-        else              installLinux();
+private boolean isAdmin() {
+    try {
+        Process p = new ProcessBuilder("net", "session")
+                .redirectErrorStream(true)
+                .start();
+        p.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
+        return p.waitFor() == 0;
+    } catch (Exception e) {
+        return false;
     }
+}
+
+    public void install() {
+        if (!isAdmin()) {
+        log.warn("Skipping auto-start setup (not running as admin).");
+        return;
+    }
+    if (isInstalled()) {
+        log.info("Auto-start already installed. Skipping.");
+        return;
+    }
+
+    log.info("Registering auto-start...");
+    log.info("  JAR  : {}", JAR_PATH);
+    log.info("  Java : {}", JAVA_BIN);
+
+    if (isWindows()) installWindows();
+    else if (isMac()) installMac();
+    else              installLinux();
+}
 
     public void uninstall() {
         log.info("Removing auto-start...");
@@ -82,7 +103,7 @@ public class AutoStartManager {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Windows — HKLM Registry Run key
+    //  Windows — HKCU Registry Run key
     //  Uses javaw.exe so no console window appears on auto-start
     // ─────────────────────────────────────────────────────────────────
 
@@ -96,6 +117,7 @@ public class AutoStartManager {
         String value;
         String exePath = resolveNativeExePath();
 
+
         if (exePath != null) {
             // Running inside jpackage app-image — use the .exe directly
             value = "\"" + exePath + "\"";
@@ -106,37 +128,22 @@ public class AutoStartManager {
             log.info("Auto-start: using JAR launch: {}", value);
         }
 
-        // Try HKLM first (all users) - requires admin
+        
+        log.info("Writing registry key to HKLM...");
+log.info("Command value: {}", value);
+
         int exit = exec("reg", "add", WIN_REG_KEY,
-                "/v", TASK_NAME,
-                "/t", "REG_SZ",
-                "/d", value,
-                "/f");
+        "/v", TASK_NAME,
+        "/t", "REG_SZ",
+        "/d", value,
+        "/f");
 
         if (exit == 0) {
-            log.info("Auto-start registered in HKLM (all users).");
+            log.info("Auto-start registered in Windows Registry.");
             log.info("  Key   : {}\\{}", WIN_REG_KEY, TASK_NAME);
             log.info("  Value : {}", value);
         } else {
-            log.warn("HKLM registry write failed (exit {}), trying HKCU (current user)...", exit);
-            
-            // Fallback to HKCU (current user) - no admin required
-            String hkcuKey = WIN_REG_KEY.replace("HKLM", "HKCU");
-            exit = exec("reg", "add", hkcuKey,
-                    "/v", TASK_NAME,
-                    "/t", "REG_SZ",
-                    "/d", value,
-                    "/f");
-            
-            if (exit == 0) {
-                log.info("Auto-start registered in HKCU (current user) as fallback.");
-                log.info("  Key   : {}\\{}", hkcuKey, TASK_NAME);
-                log.info("  Value : {}", value);
-            } else {
-                log.error("Both HKLM and HKCU registry write failed (HKLM: {}, HKCU: {})", 
-                    exec("reg", "add", WIN_REG_KEY, "/v", TASK_NAME, "/t", "REG_SZ", "/d", value, "/f"),
-                    exit);
-            }
+            log.error("Registry write failed (exit {})", exit);
         }
     }
 
@@ -161,7 +168,7 @@ public class AutoStartManager {
             // Walk up to find <AppName>.exe next to the app/ folder
             Path appDir    = self.getParent();   // …/ActivePulse/app/
             Path installDir = appDir.getParent(); // …/ActivePulse/
-            Path exe = installDir.resolve("ServiceProcess.exe");
+            Path exe = installDir.resolve("ActivePulse.exe");
 
             if (Files.exists(exe)) return exe.toString();
         } catch (Exception ignored) {}

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set APP_NAME=ServiceProcess
+set APP_NAME=ActivePulse
 set APP_VERSION=1.0.0
 set MAIN_CLASS=com.activepulse.agent.ActivePulseApplication
 set JAR_NAME=active-pulse-0.0.1-SNAPSHOT.jar

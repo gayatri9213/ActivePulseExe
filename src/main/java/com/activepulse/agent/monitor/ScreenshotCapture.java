@@ -151,16 +151,9 @@ public class ScreenshotCapture {
         if (!Files.exists(SCREENSHOT_DIR)) {
             try {
                 Files.createDirectories(SCREENSHOT_DIR);
-                LoggerFactory.getLogger(ScreenshotCapture.class)
-                    .info("Screenshot directory created: {}", SCREENSHOT_DIR);
             } catch (IOException e) {
-                LoggerFactory.getLogger(ScreenshotCapture.class)
-                    .error("Failed to create screenshot directory: {} - Error: {}", SCREENSHOT_DIR, e.getMessage());
                 throw new RuntimeException("Cannot create screenshot dir: " + SCREENSHOT_DIR, e);
             }
-        } else {
-            LoggerFactory.getLogger(ScreenshotCapture.class)
-                .debug("Screenshot directory already exists: {}", SCREENSHOT_DIR);
         }
     }
 
