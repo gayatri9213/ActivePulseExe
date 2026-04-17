@@ -61,7 +61,6 @@ public class ActivePulseApplication {
         if (args.length > 0) {
             switch (args[0].toLowerCase()) {
                 case "--install" -> {
-                    DatabaseManager.getInstance().init();
                     AutoStartManager.getInstance().install();
                     log.info("Auto-start installed.");
                     System.exit(0);

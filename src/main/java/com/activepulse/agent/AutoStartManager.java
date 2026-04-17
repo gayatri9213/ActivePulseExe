@@ -35,7 +35,7 @@ public class AutoStartManager {
     private static final String SERVICE_NAME = "activepulse";
 
     private static final String WIN_REG_KEY =
-        "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
     // ── Singleton ────────────────────────────────────────────────────
     private static volatile AutoStartManager instance;
@@ -59,8 +59,10 @@ public class AutoStartManager {
      * Java path are always up to date in the registry.
      */
     public void install() {
-        // Registry entries are now handled during installation via WiX
-        log.info("Auto-start is handled by installer - skipping runtime setup");
+        log.info("Installing auto-start...");
+        if (isWindows())   installWindows();
+        else if (isMac())  installMac();
+        else               installLinux();
     }
 
     public void uninstall() {
@@ -129,25 +131,33 @@ log.info("Command value: {}", value);
      *               app\
      *               runtime\
      */
-    private String resolveNativeExePath() {
-        try {
-            Path self = Paths.get(
-                    AutoStartManager.class
-                            .getProtectionDomain()
-                            .getCodeSource()
-                            .getLocation()
-                            .toURI()
-            ).toAbsolutePath();
+   private String resolveNativeExePath() {
+    try {
+        Path self = Paths.get(
+                AutoStartManager.class.getProtectionDomain()
+                        .getCodeSource().getLocation().toURI()
+        ).toAbsolutePath();
 
-            // Walk up to find <AppName>.exe next to the app/ folder
-            Path appDir    = self.getParent();   // …/ActivePulse/app/
-            Path installDir = appDir.getParent(); // …/ActivePulse/
-            Path exe = installDir.resolve("ActivePulse.exe");
+        Path appDir     = self.getParent();      // …/<App>/app/
+        Path installDir = appDir.getParent();    // …/<App>/
+        if (installDir == null) return null;
 
-            if (Files.exists(exe)) return exe.toString();
-        } catch (Exception ignored) {}
-        return null;
-    }
+        // Derive exe name from install dir (works regardless of branding)
+        String exeName = installDir.getFileName().toString() + ".exe";
+        Path exe = installDir.resolve(exeName);
+        if (Files.exists(exe)) return exe.toString();
+
+        // Fallback: scan for any .exe at install root
+        try (var stream = Files.list(installDir)) {
+            return stream
+                .filter(p -> p.toString().toLowerCase().endsWith(".exe"))
+                .map(Path::toString)
+                .findFirst()
+                .orElse(null);
+        }
+    } catch (Exception ignored) {}
+    return null;
+}
 
     private void uninstallWindows() {
         int exit = exec("reg", "delete", WIN_REG_KEY, "/v", TASK_NAME, "/f");
@@ -337,17 +347,19 @@ log.info("Command value: {}", value);
     // ─────────────────────────────────────────────────────────────────
 
     private int exec(String... cmd) {
-        try {
-            Process p = new ProcessBuilder(cmd)
-                    .redirectErrorStream(true)
-                    .start();
-            p.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
-            return p.waitFor();
-        } catch (Exception e) {
-            log.debug("exec({}) error: {}", cmd[0], e.getMessage());
-            return -1;
+    try {
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        String output = new String(p.getInputStream().readAllBytes()).trim();
+        int exit = p.waitFor();
+        if (exit != 0 && !output.isEmpty()) {
+            log.warn("exec({}) exit={} output={}", cmd[0], exit, output);
         }
+        return exit;
+    } catch (Exception e) {
+        log.debug("exec({}) error: {}", cmd[0], e.getMessage());
+        return -1;
     }
+}
 
     private String logPath(String fileName) {
         return Paths.get(System.getProperty("user.home"),
