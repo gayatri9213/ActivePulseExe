@@ -99,7 +99,7 @@ public class WindowsUserDetector {
             return cachedDomain;
         }
 
-        // whoami output is "DOMAIN\username"
+        // whoami output is "DOMAIN\\username"
         String whoami = runCommand("whoami");
         if (whoami != null && whoami.contains("\\")) {
             cachedDomain = whoami.substring(0, whoami.indexOf("\\")).trim();
@@ -109,7 +109,7 @@ public class WindowsUserDetector {
         return null;
     }
 
-    /** DOMAIN\username if domain detected, otherwise just username. */
+    /** DOMAIN\\username if domain detected, otherwise just username. */
     public static String getFullyQualifiedUser() {
         String user = getCurrentUser();
         if (user == null) return null;
@@ -160,7 +160,7 @@ public class WindowsUserDetector {
     private static String detectViaWhoami() {
         String out = runCommand("whoami");
         if (out == null) return null;
-        // whoami returns "DOMAIN\username" — strip domain
+        // whoami returns "DOMAIN\\username" — strip domain
         if (out.contains("\\")) {
             return out.substring(out.lastIndexOf("\\") + 1);
         }
