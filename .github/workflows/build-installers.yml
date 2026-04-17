@@ -20,12 +20,6 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      # ✅ Install WiX
-      - name: Install WiX Toolset
-        run: |
-          choco install wixtoolset -y
-          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
-
       # ✅ Build JAR
       - name: Build JAR
         run: mvn clean package
@@ -36,29 +30,11 @@ jobs:
         run: |
           cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
 
-      # ✅ Prepare WiX resources
-      - name: Prepare WiX resources
-        shell: pwsh
-        run: |
-          Write-Host "Preparing WiX resources..."
-
-          if (!(Test-Path "resources")) {
-            New-Item -ItemType Directory -Path "resources"
-          }
-
-          # Ensure wix file exists
-          if (!(Test-Path "resources\wix-overrides.wxs")) {
-            Write-Error "❌ wix-overrides.wxs missing in resources folder"
-            exit 1
-          }
-
-          Write-Host "✅ WiX file ready"
-
-      # ✅ Build MSI
+      # ✅ Build MSI with jpackage
       - name: Create MSI Installer
         shell: pwsh
         run: |
-          Write-Host "🚀 Building MSI..."
+          Write-Host "🚀 Building MSI with jpackage..."
 
           jpackage `
             --name ServiceProcess `
@@ -71,8 +47,75 @@ jobs:
             --win-shortcut `
             --win-menu `
             --win-menu-group "ServiceProcess" `
-            --win-dir-chooser `
-            --resource-dir resources
+            --win-dir-chooser
+
+      # ✅ Create auto-start script for deployment
+      - name: Create Auto-Start Script
+        shell: pwsh
+        run: |
+          Write-Host "📝 Creating auto-start configuration script..."
+
+          $scriptContent = @'
+          # ActivePulse Auto-Start Configuration Script
+          # Run this after installation to add machine-wide auto-start
+          # Uses both HKLM Run key AND Startup folder for redundancy
+
+          $ErrorActionPreference = "Stop"
+
+          $installPath = "C:\Program Files\ServiceProcess"
+          $exePath = "$installPath\ServiceProcess.exe"
+          $startupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+          $shortcutPath = "$startupFolder\ActivePulse.lnk"
+
+          Write-Host "Configuring ActivePulse auto-start for all users..."
+          Write-Host "Install Path: $installPath"
+          Write-Host "Executable: $exePath"
+
+          # Check if installed
+          if (-not (Test-Path $exePath)) {
+              Write-Host "Error: ActivePulse not found at $exePath"
+              Write-Host "Please install ActivePulse first"
+              exit 1
+          }
+
+          # Method 1: Add to HKLM Run key
+          Write-Host "Method 1: Adding to HKLM Run key..."
+          $regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+          $regName = "ActivePulseAgent"
+          $regValue = "`"$exePath`""
+          
+          try {
+              Set-ItemProperty -Path $regPath -Name $regName -Value $regValue -Type String -Force
+              Write-Host "✅ HKLM Run key configured"
+          } catch {
+              Write-Host "⚠️  Failed to add HKLM Run key: $_"
+          }
+
+          # Method 2: Create shortcut in common startup folder
+          Write-Host "Method 2: Creating shortcut in common startup folder..."
+          try {
+              $WScript = New-Object -ComObject WScript.Shell
+              $Shortcut = $WScript.CreateShortcut($shortcutPath)
+              $Shortcut.TargetPath = $exePath
+              $Shortcut.WorkingDirectory = $installPath
+              $Shortcut.Description = "ActivePulse Productivity Tracking"
+              $Shortcut.Save()
+              Write-Host "✅ Startup folder shortcut created"
+          } catch {
+              Write-Host "⚠️  Failed to create startup shortcut: $_"
+          }
+
+          Write-Host ""
+          Write-Host "✅ Auto-start configuration completed"
+          Write-Host "ActivePulse will now start automatically for all users on this machine"
+          Write-Host ""
+          Write-Host "Configuration applied:"
+          Write-Host "  - HKLM Run key: $regPath\$regName"
+          Write-Host "  - Startup folder: $shortcutPath"
+          '@
+
+          $scriptContent | Out-File -FilePath "dist\configure-autostart.ps1" -Encoding UTF8
+          Write-Host "✅ Auto-start script created: dist\configure-autostart.ps1"
 
       # ✅ Upload
       - name: Upload Artifact

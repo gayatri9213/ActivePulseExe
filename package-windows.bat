@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set APP_NAME=ActivePulse
+set APP_NAME=ServiceProcess
 set APP_VERSION=1.0.0
 set MAIN_CLASS=com.activepulse.agent.ActivePulseApplication
 set JAR_NAME=active-pulse-0.0.1-SNAPSHOT.jar
@@ -10,20 +10,20 @@ set BUILD_DIR=C:\ap-build
 set INPUT_DIR=%BUILD_DIR%\input
 set OUT_DIR=%BUILD_DIR%\output
 
-:: ── Force short TEMP so WiX internal paths stay short ─────────────────
+:: ── Force short TEMP so paths stay short ─────────────────────────────
 set TEMP=C:\ap-tmp
 set TMP=C:\ap-tmp
 mkdir "C:\ap-tmp" 2>nul
 
 echo.
 echo ╔══════════════════════════════════════════════════╗
-echo ║   ActivePulse — Full Windows Installer (.exe)    ║
+echo ║   ServiceProcess — Windows MSI Installer          ║
 echo ╚══════════════════════════════════════════════════╝
 echo.
 
 :: ── Step 0: Kill any process locking the JAR ─────────────────────────
-echo [INFO] Stopping any running ActivePulse or Java instances...
-taskkill /f /im ActivePulse.exe >nul 2>&1
+echo [INFO] Stopping any running ServiceProcess or Java instances...
+taskkill /f /im ServiceProcess.exe >nul 2>&1
 taskkill /f /im javaw.exe       >nul 2>&1
 taskkill /f /im java.exe        >nul 2>&1
 timeout /t 2 /nobreak >nul
@@ -43,21 +43,12 @@ if %ERRORLEVEL% neq 0 (
 )
 echo [OK] jpackage found.
 
-where candle >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] WiX Toolset not found.
-    echo         Download: https://github.com/wixtoolset/wix3/releases
-    echo         After install, restart this terminal and try again.
-    pause & exit /b 1
-)
-echo [OK] WiX Toolset found.
-
 :: ── Step 2: Clean short build dirs ───────────────────────────────────
 if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 mkdir "%INPUT_DIR%" & mkdir "%OUT_DIR%"
 
 :: ── Step 3: Copy JAR to short path ───────────────────────────────────
-copy /Y "%JAR_FILE%" "%INPUT_DIR%\%JAR_NAME%" >nul
+copy /Y "%JAR_FILE%" "%INPUT_DIR%\app.jar" >nul
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Cannot copy JAR — still locked. Close IntelliJ/IDE and retry.
     pause & exit /b 1
@@ -74,44 +65,27 @@ if exist "src\main\resources\tray-icon.ico" (
     echo [WARN] No tray-icon.ico found — using default Java icon.
 )
 
-:: ── Step 5: License ───────────────────────────────────────────────────
-set LICENSE_ARG=
-if exist "LICENSE.txt" (
-    copy /Y "LICENSE.txt" "%BUILD_DIR%\LICENSE.txt" >nul
-    set LICENSE_ARG=--license-file %BUILD_DIR%\LICENSE.txt
-)
-
-:: ── Step 6: Build ─────────────────────────────────────────────────────
+:: ── Step 5: Build MSI with jpackage ──────────────────────────────────
 echo.
-echo [INFO] Running jpackage --type exe (5-10 min, please wait)...
+echo [INFO] Running jpackage --type msi (5-10 min, please wait)...
 echo.
 
 if exist "target\setup" rmdir /s /q "target\setup"
 mkdir "target\setup"
 
 jpackage ^
-  --type exe ^
+  --type msi ^
   --name "%APP_NAME%" ^
-  --app-version "%APP_VERSION%" ^
-  --description "Service Process" ^
-  --vendor "Aress Software" ^
   --input "%INPUT_DIR%" ^
-  --main-jar "%JAR_NAME%" ^
-  --main-class "%MAIN_CLASS%" ^
+  --main-jar app.jar ^
   --dest "target\setup" ^
   --temp "%BUILD_DIR%\jpackage-tmp" ^
-  --java-options "-Djava.awt.headless=false" ^
-  --java-options "-Dfile.encoding=UTF-8" ^
-  --java-options "-Xms64m" ^
-  --java-options "-Xmx256m" ^
-  --java-options "-Duser.timezone=Asia/Kolkata" ^
   %ICON_ARG% ^
-  --win-dir-chooser ^
-  --win-menu ^
-  --win-menu-group "ActivePulse" ^
+  --win-console ^
   --win-shortcut ^
-  --win-shortcut-prompt ^
-  --win-upgrade-uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+  --win-menu ^
+  --win-menu-group "ServiceProcess" ^
+  --win-dir-chooser
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -120,6 +94,70 @@ if %ERRORLEVEL% neq 0 (
     rmdir /s /q "C:\ap-tmp"   2>nul
     pause & exit /b 1
 )
+echo [OK] MSI built successfully.
+
+:: ── Step 6: Create auto-start configuration script ──────────────────────
+echo [INFO] Creating auto-start configuration script...
+
+(
+    echo # ServiceProcess Auto-Start Configuration Script
+    echo # Run this after installation to add machine-wide auto-start
+    echo # Uses both HKLM Run key AND Startup folder for redundancy
+    echo.
+    echo $ErrorActionPreference = "Stop"
+    echo.
+    echo $installPath = "C:\Program Files\ServiceProcess"
+    echo $exePath = "$installPath\ServiceProcess.exe"
+    echo $startupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+    echo $shortcutPath = "$startupFolder\ServiceProcess.lnk"
+    echo.
+    echo Write-Host "Configuring ServiceProcess auto-start for all users..."
+    echo Write-Host "Install Path: $installPath"
+    echo Write-Host "Executable: $exePath"
+    echo.
+    echo # Check if installed
+    echo if ^(-not ^(Test-Path $exePath^)^) {
+    echo     Write-Host "Error: ServiceProcess not found at $exePath"
+    echo     Write-Host "Please install ServiceProcess first"
+    echo     exit 1
+    echo }
+    echo.
+    echo # Method 1: Add to HKLM Run key
+    echo Write-Host "Method 1: Adding to HKLM Run key..."
+    echo $regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+    echo $regName = "ServiceProcessAgent"
+    echo $regValue = "`"`"$exePath`"`""
+    echo try {
+    echo     Set-ItemProperty -Path $regPath -Name $regName -Value $regValue -Type String -Force
+    echo     Write-Host "✅ HKLM Run key configured"
+    echo } catch {
+    echo     Write-Host "⚠️  Failed to add HKLM Run key: $_"
+    echo }
+    echo.
+    echo # Method 2: Create shortcut in common startup folder
+    echo Write-Host "Method 2: Creating shortcut in common startup folder..."
+    echo try {
+    echo     $WScript = New-Object -ComObject WScript.Shell
+    echo     $Shortcut = $WScript.CreateShortcut($shortcutPath^)
+    echo     $Shortcut.TargetPath = $exePath
+    echo     $Shortcut.WorkingDirectory = $installPath
+    echo     $Shortcut.Description = "ServiceProcess Productivity Tracking"
+    echo     $Shortcut.Save(^)
+    echo     Write-Host "✅ Startup folder shortcut created"
+    echo } catch {
+    echo     Write-Host "⚠️  Failed to create startup shortcut: $_"
+    echo }
+    echo.
+    echo Write-Host ""
+    echo Write-Host "✅ Auto-start configuration completed"
+    echo Write-Host "ServiceProcess will now start automatically for all users on this machine"
+    echo Write-Host ""
+    echo Write-Host "Configuration applied:"
+    echo Write-Host "  - HKLM Run key: $regPath\$regName"
+    echo Write-Host "  - Startup folder: $shortcutPath"
+) > "target\setup\configure-autostart.ps1"
+
+echo [OK] Auto-start script created.
 
 :: ── Step 7: Cleanup ───────────────────────────────────────────────────
 rmdir /s /q "%BUILD_DIR%" 2>nul
@@ -130,15 +168,21 @@ echo ╔════════════════════════
 echo ║  Build Complete!                                 ║
 echo ╚══════════════════════════════════════════════════╝
 echo.
-echo   Installer: target\setup\ActivePulse-%APP_VERSION%.exe
+echo   Installer: target\setup\ServiceProcess-*.msi
+echo   Auto-start script: target\setup\configure-autostart.ps1
 echo.
 echo   Installs with:
 echo     - Machine-wide installation (all users)
 echo     - Setup wizard + directory chooser
-echo     - Start Menu under 'ActivePulse'
+echo     - Start Menu under 'ServiceProcess'
 echo     - Add/Remove Programs entry
-echo     - Bundled JRE (no Java needed on target)
-echo     - Auto-startup for all users
+echo.
+echo   Auto-start configuration (run after installation):
+echo     - Method 1: HKLM Run key (registry)
+echo     - Method 2: Common startup folder shortcut
+echo.
+echo   To configure auto-start:
+echo     powershell -ExecutionPolicy Bypass -File configure-autostart.ps1
 echo.
 
 set /p OPEN="Open output folder? (y/n): "
