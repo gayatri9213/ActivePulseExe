@@ -14,34 +14,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ✅ Setup Java
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
+      # ✅ Install WiX
       - name: Install WiX Toolset
         run: |
           choco install wixtoolset -y
           echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
 
+      # ✅ Build JAR
       - name: Build JAR
         run: mvn clean package
 
+      # ✅ Prepare JAR
       - name: Prepare JAR
         shell: bash
         run: |
           cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
 
-      - name: Verify WiX file exists
+      # ✅ FIX: Ensure resources folder + copy wix file
+      - name: Prepare WiX resources
         shell: pwsh
         run: |
-          if (!(Test-Path "src\main\resources\wix-overrides.wxs")) {
-            Write-Error "❌ wix-overrides.wxs not found in resources folder"
+          Write-Host "Preparing WiX resources..."
+
+          # Create resources folder if not exists
+          if (!(Test-Path "resources")) {
+            New-Item -ItemType Directory -Path "resources"
+          }
+
+          # Copy wix file from src → resources
+          Copy-Item "src\main\resources\wix-overrides.wxs" "resources\wix-overrides.wxs" -Force
+
+          # Verify file exists
+          if (!(Test-Path "resources\wix-overrides.wxs")) {
+            Write-Error "❌ wix-overrides.wxs not found"
             exit 1
           }
-          Write-Host "✅ WiX override file found"
 
+          Write-Host "✅ WiX file ready"
+
+      # ✅ Build MSI
       - name: Create MSI Installer with Auto-Start
         shell: pwsh
         run: |
@@ -61,12 +79,12 @@ jobs:
             --win-dir-chooser `
             --resource-dir resources
 
+      # ✅ Upload artifact
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-msi
           path: dist/*
-
 
   # 🐧 LINUX
   build-linux:
