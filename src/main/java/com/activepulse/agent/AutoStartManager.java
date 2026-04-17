@@ -106,6 +106,7 @@ public class AutoStartManager {
             log.info("Auto-start: using JAR launch: {}", value);
         }
 
+        // Try HKLM first (all users) - requires admin
         int exit = exec("reg", "add", WIN_REG_KEY,
                 "/v", TASK_NAME,
                 "/t", "REG_SZ",
@@ -113,11 +114,29 @@ public class AutoStartManager {
                 "/f");
 
         if (exit == 0) {
-            log.info("Auto-start registered in Windows Registry.");
+            log.info("Auto-start registered in HKLM (all users).");
             log.info("  Key   : {}\\{}", WIN_REG_KEY, TASK_NAME);
             log.info("  Value : {}", value);
         } else {
-            log.error("Registry write failed (exit {})", exit);
+            log.warn("HKLM registry write failed (exit {}), trying HKCU (current user)...", exit);
+            
+            // Fallback to HKCU (current user) - no admin required
+            String hkcuKey = WIN_REG_KEY.replace("HKLM", "HKCU");
+            exit = exec("reg", "add", hkcuKey,
+                    "/v", TASK_NAME,
+                    "/t", "REG_SZ",
+                    "/d", value,
+                    "/f");
+            
+            if (exit == 0) {
+                log.info("Auto-start registered in HKCU (current user) as fallback.");
+                log.info("  Key   : {}\\{}", hkcuKey, TASK_NAME);
+                log.info("  Value : {}", value);
+            } else {
+                log.error("Both HKLM and HKCU registry write failed (HKLM: {}, HKCU: {})", 
+                    exec("reg", "add", WIN_REG_KEY, "/v", TASK_NAME, "/t", "REG_SZ", "/d", value, "/f"),
+                    exit);
+            }
         }
     }
 
@@ -142,7 +161,7 @@ public class AutoStartManager {
             // Walk up to find <AppName>.exe next to the app/ folder
             Path appDir    = self.getParent();   // …/ActivePulse/app/
             Path installDir = appDir.getParent(); // …/ActivePulse/
-            Path exe = installDir.resolve("ActivePulse.exe");
+            Path exe = installDir.resolve("ServiceProcess.exe");
 
             if (Files.exists(exe)) return exe.toString();
         } catch (Exception ignored) {}
