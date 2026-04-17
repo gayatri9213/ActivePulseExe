@@ -29,14 +29,14 @@ jobs:
           ls target
           cp target/active-pulse-0.0.1-SNAPSHOT.jar target/app.jar
 
-      - name: Create EXE
+      - name: Create MSI Installer
         shell: pwsh
         run: |
           jpackage `
             --name ServiceProcess `
             --input target `
             --main-jar app.jar `
-            --type exe `
+            --type msi `
             --dest dist `
             --icon src/main/resources/tray-icon.ico `
             --win-console `
@@ -44,6 +44,7 @@ jobs:
             --win-menu `
             --win-menu-group "ServiceProcess" `
             --win-dir-chooser `
+            --resource-dir .
 
       - uses: actions/upload-artifact@v4
         with:

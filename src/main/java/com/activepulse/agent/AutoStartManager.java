@@ -58,36 +58,10 @@ public class AutoStartManager {
      * Always re-installs on every startup — ensures JAR path and
      * Java path are always up to date in the registry.
      */
-private boolean isAdmin() {
-    try {
-        Process p = new ProcessBuilder("net", "session")
-                .redirectErrorStream(true)
-                .start();
-        p.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
-        return p.waitFor() == 0;
-    } catch (Exception e) {
-        return false;
-    }
-}
-
     public void install() {
-        if (!isAdmin()) {
-        log.warn("Skipping auto-start setup (not running as admin).");
-        return;
+        // Registry entries are now handled during installation via WiX
+        log.info("Auto-start is handled by installer - skipping runtime setup");
     }
-    if (isInstalled()) {
-        log.info("Auto-start already installed. Skipping.");
-        return;
-    }
-
-    log.info("Registering auto-start...");
-    log.info("  JAR  : {}", JAR_PATH);
-    log.info("  Java : {}", JAVA_BIN);
-
-    if (isWindows()) installWindows();
-    else if (isMac()) installMac();
-    else              installLinux();
-}
 
     public void uninstall() {
         log.info("Removing auto-start...");
