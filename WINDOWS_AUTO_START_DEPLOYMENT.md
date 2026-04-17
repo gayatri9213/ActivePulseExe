@@ -19,7 +19,7 @@ This guide explains how to deploy ActivePulse with machine-wide auto-start in Ac
 
 ## Two Approaches
 
-### Approach 1: Registry-Based (HKLM)
+### Approach 1: Registry-Based (HKLM) - RECOMMENDED for jpackage
 **File**: `wix-overrides.wxs`
 
 **How it Works**:
@@ -32,6 +32,8 @@ This guide explains how to deploy ActivePulse with machine-wide auto-start in Ac
 - Easy to verify and debug
 - Widely understood by IT administrators
 - Minimal overhead
+- **Works with jpackage** (no external dependencies)
+- Includes common startup folder shortcut for redundancy
 
 **Cons**:
 - Can be disabled by registry cleaners
@@ -39,11 +41,13 @@ This guide explains how to deploy ActivePulse with machine-wide auto-start in Ac
 - No execution context control
 
 **Best For**:
+- **Most deployments** (RECOMMENDED)
 - Simple deployments
 - Environments without strict Group Policy restrictions
+- When using jpackage for MSI creation
 - When simplicity is preferred over flexibility
 
-### Approach 2: Task Scheduler (RECOMMENDED)
+### Approach 2: Task Scheduler (Enterprise Alternative)
 **File**: `wix-overrides-task-scheduler.wxs`
 
 **How it Works**:
@@ -62,14 +66,21 @@ This guide explains how to deploy ActivePulse with machine-wide auto-start in Ac
 - **Multiple Instance Control**: Prevents duplicate instances from running
 
 **Cons**:
+- **Requires WixUtilExtension** - jpackage doesn't support this extension
+- Requires manual WiX compilation (candle/light) outside of jpackage
+- More complex build process
 - Slightly more complex configuration
-- Requires WiX UtilExtension
 
 **Best For**:
-- **Enterprise AD environments** (HIGHLY RECOMMENDED)
-- Environments with Group Policy management
-- When reliability and manageability are critical
-- Production deployments
+- Enterprise AD environments with strict Group Policy requirements
+- When Task Scheduler is mandated by IT policy
+- When you can use direct WiX Toolset compilation instead of jpackage
+
+**IMPORTANT**: The Task Scheduler approach requires manual WiX compilation because jpackage doesn't support the WixUtilExtension. To use this approach:
+1. Build base MSI with jpackage (without auto-start)
+2. Extract MSI contents
+3. Compile with WiX Toolset: `candle -ext WixUtilExtension wix-overrides-task-scheduler.wxs`
+4. Link with: `light -ext WixUtilExtension -out final.msi`
 
 ## Deployment Instructions
 

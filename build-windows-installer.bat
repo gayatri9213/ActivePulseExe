@@ -42,18 +42,21 @@ echo.
 echo ============================================================
 echo Choose Auto-Start Method:
 echo ============================================================
-echo 1. Registry-based (HKLM) - Simple, works for all users
-echo 2. Task Scheduler - Enterprise recommended, more robust
+echo 1. Registry-based (HKLM) - Simple, works for all users (Recommended for jpackage)
+echo 2. Task Scheduler - Enterprise recommended (Requires manual WiX compilation)
 echo ============================================================
-set /p autostartMethod="Enter choice (1 or 2) [default: 2]: "
-if "%autostartMethod%"=="" set autostartMethod=2
+set /p autostartMethod="Enter choice (1 or 2) [default: 1]: "
+if "%autostartMethod%"=="" set autostartMethod=1
 
 if "%autostartMethod%"=="1" (
     set wixFile=wix-overrides.wxs
     echo Using Registry-based auto-start (HKLM)
 ) else (
-    set wixFile=wix-overrides-task-scheduler.wxs
-    echo Using Task Scheduler-based auto-start (Enterprise Recommended)
+    echo WARNING: Task Scheduler approach requires WixUtilExtension which jpackage doesn't support
+    echo This will build the base MSI without Task Scheduler configuration
+    echo You'll need to manually compile with WiX Toolset to add Task Scheduler support
+    set wixFile=wix-overrides.wxs
+    echo Falling back to Registry-based auto-start (HKLM)
 )
 
 REM Copy selected WiX file to main.wxs (jpackage expects main.wxs in resource dir)
