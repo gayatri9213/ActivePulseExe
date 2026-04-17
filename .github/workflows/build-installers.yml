@@ -55,7 +55,7 @@ jobs:
             --win-shortcut `
             --win-menu `
             --win-menu-group "ActivePulse" `
-            --win-dir-chooser
+            --win-dir-chooser `
             --win-upgrade-uuid $env:WIN_UPGRADE_UUID `
             --java-options "-Dfile.encoding=UTF-8" `
             --java-options "-Duser.timezone=Asia/Kolkata" `
