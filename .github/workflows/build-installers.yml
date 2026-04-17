@@ -36,7 +36,7 @@ jobs:
       - name: Verify WiX file exists
         shell: pwsh
         run: |
-          if (!(Test-Path "resources\wix-overrides.wxs")) {
+          if (!(Test-Path "src\main\resources\wix-overrides.wxs")) {
             Write-Error "❌ wix-overrides.wxs not found in resources folder"
             exit 1
           }
