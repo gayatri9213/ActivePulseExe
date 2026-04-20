@@ -54,29 +54,40 @@ public class AutoStartManager {
     // ─────────────────────────────────────────────────────────────────
 
     public void install() {
-        // For AD users, always create HKCU entry even if HKLM exists
-        // because HKLM may not execute due to group policies
-        boolean isMachineWide = isWindows() && isInstalledMachineWide();
-        
-        if (isMachineWide) {
-            log.info("Auto-start: machine-wide HKLM entry present — creating HKCU entry for AD user compatibility.");
+        try {
+            log.info("Registering auto-start...");
+            
+            if (isWindows()) {
+                // Attempt both HKLM and HKCU for redundancy
+                boolean hkmlSuccess = installWindowsHKLM();
+                boolean hkcuSuccess = installWindows();
+                
+                if (hkmlSuccess || hkcuSuccess) {
+                    log.info("Auto-start registration successful (HKLM: {}, HKCU: {})", hkmlSuccess, hkcuSuccess);
+                } else {
+                    log.warn("Auto-start registration failed for both HKLM and HKCU");
+                }
+            }
+            else if (isMac())  installMac();
+            else               installLinux();
+        } catch (Exception e) {
+            log.error("Auto-start installation failed (non-critical): {}", e.getMessage());
+            log.debug("Auto-start failure details", e);
         }
-
-        log.info("Registering auto-start...");
-        if (isWindows())   installWindows();
-        else if (isMac())  installMac();
-        else               installLinux();
     }
 
     public void uninstall() {
         log.info("Removing auto-start...");
-        if (isWindows()) uninstallWindows();
+        if (isWindows()) {
+            uninstallWindowsHKLM();
+            uninstallWindows();
+        }
         else if (isMac()) uninstallMac();
         else              uninstallLinux();
     }
 
     public boolean isInstalled() {
-        if (isWindows()) return isInstalledWindows();
+        if (isWindows()) return isInstalledWindows() || isInstalledMachineWide();
         if (isMac())     return isInstalledMac();
         return isInstalledLinux();
     }
@@ -85,7 +96,7 @@ public class AutoStartManager {
     //  Windows
     // ─────────────────────────────────────────────────────────────────
 
-    private void installWindows() {
+    private boolean installWindows() {
         String exePath = resolveNativeExePath();
         String value;
 
@@ -105,8 +116,43 @@ public class AutoStartManager {
 
         if (exit == 0) {
             log.info("Auto-start registered: {}\\{} = {}", WIN_REG_KEY, TASK_NAME, value);
+            return true;
         } else {
             log.error("Registry write failed (exit {}). Key: {}", exit, WIN_REG_KEY);
+            return false;
+        }
+    }
+
+    /**
+     * Install machine-wide HKLM registry entry (requires admin privileges).
+     * This is called in addition to HKCU for redundancy.
+     * If HKLM write fails (no admin), we log but don't fail the app.
+     */
+    private boolean installWindowsHKLM() {
+        String exePath = resolveNativeExePath();
+        String value;
+
+        if (exePath != null) {
+            value = "\"" + exePath + "\"";
+            log.info("Auto-start: using native exe for HKLM: {}", exePath);
+        } else {
+            value = String.format("\"%s\" -jar \"%s\"", JAVA_BIN, JAR_PATH);
+            log.info("Auto-start: using JAR launch for HKLM: {}", value);
+        }
+
+        String hklmKey = "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        int exit = exec("reg", "add", hklmKey,
+                "/v", TASK_NAME,
+                "/t", "REG_SZ",
+                "/d", value,
+                "/f");
+
+        if (exit == 0) {
+            log.info("Auto-start registered in HKLM: {}\\{} = {}", hklmKey, TASK_NAME, value);
+            return true;
+        } else {
+            log.warn("HKLM registry write failed (exit {}). This is expected for non-admin users. HKCU will be used instead.", exit);
+            return false;
         }
     }
 
@@ -165,10 +211,17 @@ public class AutoStartManager {
                 "/v", TASK_NAME) == 0;
     }
 
+    private void uninstallWindowsHKLM() {
+        String hklmKey = "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        int exit = exec("reg", "delete", hklmKey, "/v", TASK_NAME, "/f");
+        if (exit == 0) log.info("Auto-start HKLM entry removed.");
+        else           log.warn("HKLM reg delete returned {} — entry may not exist or no admin rights.", exit);
+    }
+
     private void uninstallWindows() {
         int exit = exec("reg", "delete", WIN_REG_KEY, "/v", TASK_NAME, "/f");
         if (exit == 0) log.info("Auto-start HKCU entry removed.");
-        else           log.warn("reg delete returned {} — entry may not exist.", exit);
+        else           log.warn("HKCU reg delete returned {} — entry may not exist.", exit);
     }
 
     private boolean isInstalledWindows() {

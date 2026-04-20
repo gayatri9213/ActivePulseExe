@@ -125,7 +125,13 @@ public class ActivePulseApplication {
 
     private void installAutoStart() {
         // Always re-register to keep JAR path and Java path current
-        AutoStartManager.getInstance().install();
+        try {
+            AutoStartManager.getInstance().install();
+        } catch (Exception e) {
+            log.error("Auto-start registration failed (non-critical): {}", e.getMessage());
+            log.debug("Auto-start failure details", e);
+            // Continue running even if auto-start fails
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -246,14 +252,15 @@ public class ActivePulseApplication {
     }
 
     private static void ensureDirectories() {
-        Path logDir = Paths.get(System.getProperty("user.home"), ".activepulse", "logs");
-        if (!Files.exists(logDir)) {
-            try {
+        try {
+            Path logDir = Paths.get(System.getProperty("user.home"), ".activepulse", "logs");
+            if (!Files.exists(logDir)) {
                 Files.createDirectories(logDir);
                 System.out.println("[ActivePulse] Created log directory: " + logDir);
-            } catch (IOException e) {
-                System.err.println("[ActivePulse] WARNING: " + e.getMessage());
             }
+        } catch (IOException e) {
+            System.err.println("[ActivePulse] WARNING: Failed to create directories: " + e.getMessage());
+            // Continue anyway - log directory creation is non-critical
         }
     }
 }
