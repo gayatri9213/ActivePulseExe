@@ -41,6 +41,8 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "🚀 Building MSI with jpackage..."
+          $javaHome = $env:JAVA_HOME
+          Write-Host "Using JDK from: $javaHome"
           jpackage `
             --name $env:APP_NAME `
             --app-version $env:APP_VERSION `
@@ -51,6 +53,7 @@ jobs:
             --main-class $env:MAIN_CLASS `
             --type msi `
             --dest dist `
+            --runtime $javaHome `
             --icon src/main/resources/tray-icon.ico `
             --win-shortcut `
             --win-menu `
